@@ -1,0 +1,21 @@
+# Standalone, on your own Docker host: docker compose up -d --build
+# Publishes to 127.0.0.1 only; put your own reverse proxy or tunnel in front of it.
+services:
+  app:
+    build: .
+    container_name: stage-signup
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${HOST_PORT:-3011}:3011"
+    environment:
+      PORT: "3011"
+      DATA_DIR: /data
+      GAME_NAME: "${GAME_NAME:-Stage Signup}"
+      # Leave unset to use the /admin first-run setup screen.
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
+      # Behind your own proxy under a path, e.g. https://example.com/signup/
+      BASE_PATH: "${BASE_PATH:-}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+    volumes:
+      # Admin password hash and settings survive rebuilds. Must be owned by uid 1000.
+      - ./data:/data
