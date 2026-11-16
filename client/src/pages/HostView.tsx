@@ -1,24 +1,44 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent as RPointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent as RPointerEvent } from "react";
 import { joinDisplay, joinUrl as venueJoinUrl } from "@bargames/sdk/client";
-import { LIMITS, type EntryInput, type EntryView, type RoomSettings, type RoomView } from "@signup/shared";
+import { LIMITS, type CohostLink, type EntryInput, type EntryView, type RunnerInfo, type StageView } from "@signup/shared";
+import { api } from "../api";
 import { EntryDetail, STATUS_LABEL, useNow, waitText } from "../components/bits";
 import { QrCode } from "../components/QrCode";
 import { useVenue } from "../useVenue";
-import type { Act } from "./RoomPage";
 
-/** The host's (and co-hosts') screen: the stage, the line, and the night's settings. */
-export function HostView({ view, skew, act }: { view: RoomView; skew: number; act: Act }) {
-  const isHost = view.you.role === "host";
+/** Runs one list action over /api/run (checked server-side every time). Null when refused. */
+export type Run = (action: string, body?: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+
+/**
+ * Running the list: staff, a guest host or a guest co-host. The stage's setup (name, mode,
+ * limits) is on the admin page, staff only.
+ */
+export function HostView({
+  view,
+  skew,
+  run,
+  me,
+  onError,
+}: {
+  view: StageView;
+  skew: number;
+  run: Run;
+  me: RunnerInfo;
+  onError: (msg: string) => void;
+}) {
   return (
     <main className="host">
-      <NowPanel view={view} skew={skew} act={act} />
-      <QueuePanel view={view} skew={skew} act={act} />
-      <ControlsPanel view={view} act={act} />
-      <AddPanel view={view} act={act} />
+      {!view.stage.enabled && (
+        <p className="warning">This stage is turned off: patrons can't see it. Staff turn it on in the admin page.</p>
+      )}
+      <NowPanel view={view} skew={skew} run={run} />
+      <QueuePanel view={view} skew={skew} run={run} />
+      <ControlsPanel view={view} run={run} />
+      <AddPanel view={view} run={run} />
       <InvitePanel view={view} />
-      <HistoryPanel view={view} act={act} />
-      <SettingsPanel view={view} act={act} />
-      {isHost && <CohostsPanel view={view} act={act} />}
+      <HistoryPanel view={view} run={run} />
+      {me.canAddCohosts && <CohostsPanel onError={onError} />}
+      <NightPanel view={view} run={run} />
     </main>
   );
 }
@@ -29,13 +49,13 @@ function minutesSince(at: number | undefined, now: number): string {
   return m < 1 ? "just now" : `${m} min`;
 }
 
-function NowPanel({ view, skew, act }: { view: RoomView; skew: number; act: Act }) {
+function NowPanel({ view, skew, run }: { view: StageView; skew: number; run: Run }) {
   const now = useNow(skew, 30_000);
   const cur = view.now;
   const next = view.queue[0];
   return (
     <section className="panel now-panel host-now">
-      <h2 className="eyebrow">On stage now</h2>
+      <h2 className="eyebrow">{view.stage.name}: on stage now</h2>
       {cur ? (
         <>
           <div className="now-line big">
@@ -46,18 +66,18 @@ function NowPanel({ view, skew, act }: { view: RoomView; skew: number; act: Act 
             </span>
           </div>
           <div className="row">
-            <button className="btn btn-primary btn-big grow" onClick={() => act("nextPerformer")}>
+            <button className="btn btn-primary btn-big grow" onClick={() => run("next")}>
               {next ? `Next: ${next.name} ▶` : "Done, nobody waiting"}
             </button>
           </div>
           <div className="row">
-            <button className="btn btn-secondary" onClick={() => act("finishCurrent")} title="Done; the stage stays empty">
+            <button className="btn btn-secondary" onClick={() => run("done")} title="Done; the stage stays empty">
               ✓ Done
             </button>
-            <button className="btn btn-ghost" onClick={() => act("skipEntry", cur.id)} title="A no-show: out of the line">
+            <button className="btn btn-ghost" onClick={() => run("skip", { entryId: cur.id })} title="A no-show: out of the line">
               Skip
             </button>
-            <button className="btn btn-ghost" onClick={() => act("moveToEnd", cur.id)} title="Back in line, at the end">
+            <button className="btn btn-ghost" onClick={() => run("to-end", { entryId: cur.id })} title="Back in line, at the end">
               Move to end
             </button>
           </div>
@@ -65,7 +85,7 @@ function NowPanel({ view, skew, act }: { view: RoomView; skew: number; act: Act 
       ) : (
         <>
           <p className="muted">Nobody's on stage.</p>
-          <button className="btn btn-primary btn-big" disabled={!next} onClick={() => act("nextPerformer")}>
+          <button className="btn btn-primary btn-big" disabled={!next} onClick={() => run("next")}>
             {next ? `Bring up ${next.name} ▶` : "Nobody waiting yet"}
           </button>
         </>
@@ -80,20 +100,20 @@ interface Drag {
   over: number;
   startY: number;
   dy: number;
-  /** Row midpoints (page Y) and heights at the start of the drag. */
+  /** Row midpoints (client Y) and the dragged row's height at the start of the drag. */
   mids: number[];
   height: number;
 }
 
 /**
  * The line, with drag to reorder: press the ⠿ handle and drag (mouse, finger or pen; the
- * handle has touch-action: none so the page doesn't scroll). Arrow keys on the handle
- * move one place.
+ * handle has touch-action: none so the page doesn't scroll). Arrow keys on the handle move
+ * one place.
  */
-function QueuePanel({ view, skew, act }: { view: RoomView; skew: number; act: Act }) {
+function QueuePanel({ view, skew, run }: { view: StageView; skew: number; run: Run }) {
   const now = useNow(skew);
   const [drag, setDrag] = useState<Drag | null>(null);
-  // The order shown after a drop, until the server's next state arrives.
+  // The order shown after a drop, until the server's next view arrives.
   const [pending, setPending] = useState<string[] | null>(null);
   const rows = useRef(new Map<string, HTMLLIElement>());
   const queueKey = view.queue.map((e) => e.id).join(",");
@@ -107,7 +127,7 @@ function QueuePanel({ view, skew, act }: { view: RoomView; skew: number; act: Ac
     const ids = order.filter((x) => x !== id);
     ids.splice(toIndex, 0, id);
     setPending(ids);
-    act("moveEntry", { entryId: id, toIndex });
+    void run("move", { entryId: id, toIndex }).then((r) => r === null && setPending(null));
   };
 
   const onDown = (e: RPointerEvent<HTMLButtonElement>, id: string, index: number) => {
@@ -156,7 +176,7 @@ function QueuePanel({ view, skew, act }: { view: RoomView; skew: number; act: Ac
   return (
     <section className="panel">
       <h2>
-        In line <span className="muted">({list.length})</span>
+        In line <span className="muted">({list.length} waiting)</span>
       </h2>
       {list.length === 0 ? (
         <p className="muted">Nobody's waiting.</p>
@@ -193,7 +213,7 @@ function QueuePanel({ view, skew, act }: { view: RoomView; skew: number; act: Ac
                   {e.byHost && " · added by hand"}
                 </span>
               </div>
-              <QueueActions e={e} view={view} act={act} />
+              <QueueActions e={e} view={view} run={run} />
             </li>
           ))}
         </ol>
@@ -202,17 +222,17 @@ function QueuePanel({ view, skew, act }: { view: RoomView; skew: number; act: Ac
   );
 }
 
-function QueueActions({ e, view, act }: { e: EntryView; view: RoomView; act: Act }) {
+function QueueActions({ e, view, run }: { e: EntryView; view: StageView; run: Run }) {
   const [editing, setEditing] = useState(false);
   return (
     <div className="queue-actions">
-      <button className="btn btn-small btn-secondary" onClick={() => act("nowOn", e.id)} title="Bring them up now">
+      <button className="btn btn-small btn-secondary" onClick={() => run("now-on", { entryId: e.id })} title="Bring them up now">
         Now on
       </button>
-      <button className="btn btn-small btn-ghost" onClick={() => act("moveToEnd", e.id)}>
+      <button className="btn btn-small btn-ghost" onClick={() => run("to-end", { entryId: e.id })}>
         To end
       </button>
-      <button className="btn btn-small btn-ghost" onClick={() => act("skipEntry", e.id)}>
+      <button className="btn btn-small btn-ghost" onClick={() => run("skip", { entryId: e.id })}>
         Skip
       </button>
       <button className="btn btn-small btn-ghost" onClick={() => setEditing(true)}>
@@ -223,11 +243,11 @@ function QueueActions({ e, view, act }: { e: EntryView; view: RoomView; act: Act
           <div className="panel modal-box" onClick={(ev) => ev.stopPropagation()}>
             <EntryForm
               title={`Edit ${e.name}`}
-              karaoke={view.settings.mode === "karaoke"}
+              karaoke={view.stage.mode === "karaoke"}
               initial={e}
               submitLabel="Save"
               onSubmit={async (input) => {
-                const ok = await act("editEntry", { entryId: e.id, ...input });
+                const ok = await run("edit", { entryId: e.id, ...input });
                 if (ok) setEditing(false);
                 return Boolean(ok);
               }}
@@ -240,7 +260,7 @@ function QueueActions({ e, view, act }: { e: EntryView; view: RoomView; act: Act
   );
 }
 
-/** Name, song and artist (or note), and "with": the host's add and edit form. */
+/** Name, song and artist, a note, and "with": the add and edit form. */
 function EntryForm({
   title,
   karaoke,
@@ -317,17 +337,17 @@ function EntryForm({
   );
 }
 
-function ControlsPanel({ view, act }: { view: RoomView; act: Act }) {
-  const [message, setMessage] = useState(view.settings.message);
-  // Follow changes made elsewhere (a co-host) when this field isn't being edited.
+function ControlsPanel({ view, run }: { view: StageView; run: Run }) {
+  const [message, setMessage] = useState(view.live.message);
+  // Follow changes made elsewhere (a co-host) while this field isn't being edited.
   const [editing, setEditing] = useState(false);
   useEffect(() => {
-    if (!editing) setMessage(view.settings.message);
-  }, [view.settings.message, editing]);
-  const open = view.settings.signupsOpen;
+    if (!editing) setMessage(view.live.message);
+  }, [view.live.message, editing]);
+  const open = view.live.signupsOpen;
   const save = async (ev: FormEvent) => {
     ev.preventDefault();
-    await act("setMessage", message.trim());
+    await run("message", { message: message.trim() });
     setEditing(false);
   };
   return (
@@ -335,13 +355,13 @@ function ControlsPanel({ view, act }: { view: RoomView; act: Act }) {
       <h2>Signups</h2>
       <div className="row">
         <span className={`pill ${open ? "pill-on" : "pill-off"}`}>{open ? "Open" : "Paused"}</span>
-        <button className={`btn ${open ? "btn-ghost" : "btn-primary"}`} onClick={() => act("setSignupsOpen", !open)}>
+        <button className={`btn ${open ? "btn-ghost" : "btn-primary"}`} onClick={() => run("signups", { open: !open })}>
           {open ? "Pause signups" : "Open signups"}
         </button>
       </div>
       <p className="muted small">
-        While paused, phones can't join the list. You can still add people by hand, and everyone already in line keeps
-        their place.
+        While paused, phones see "Signups are paused". You can still add people by hand, and everyone in line keeps their
+        place.
       </p>
       <form className="message-form" onSubmit={save}>
         <label>
@@ -357,17 +377,17 @@ function ControlsPanel({ view, act }: { view: RoomView; act: Act }) {
           />
         </label>
         <div className="row">
-          <button className="btn btn-secondary" disabled={message.trim() === view.settings.message}>
+          <button className="btn btn-secondary" disabled={message.trim() === view.live.message}>
             Show message
           </button>
-          {view.settings.message && (
+          {view.live.message && (
             <button
               type="button"
               className="btn btn-ghost"
               onClick={() => {
                 setMessage("");
                 setEditing(false);
-                act("setMessage", "");
+                void run("message", { message: "" });
               }}
             >
               Clear
@@ -379,16 +399,16 @@ function ControlsPanel({ view, act }: { view: RoomView; act: Act }) {
   );
 }
 
-function AddPanel({ view, act }: { view: RoomView; act: Act }) {
+function AddPanel({ view, run }: { view: StageView; run: Run }) {
   const [open, setOpen] = useState(false);
   return (
     <section className="panel">
       {open ? (
         <EntryForm
-          title="Add someone by hand"
-          karaoke={view.settings.mode === "karaoke"}
+          title="Add a walk-up"
+          karaoke={view.stage.mode === "karaoke"}
           submitLabel="Add to the end of the line"
-          onSubmit={async (input) => Boolean(await act("addEntry", input))}
+          onSubmit={async (input) => Boolean(await run("add", input as Record<string, unknown>))}
           onCancel={() => setOpen(false)}
         />
       ) : (
@@ -400,25 +420,21 @@ function AddPanel({ view, act }: { view: RoomView; act: Act }) {
   );
 }
 
-function InvitePanel({ view }: { view: RoomView }) {
+function InvitePanel({ view }: { view: StageView }) {
   const venue = useVenue();
-  const join = joinDisplay(venue, `/join/${view.code}`, view.code);
-  const tvUrl = venueJoinUrl(venue, `/join/${view.code}?as=table`);
+  const join = joinDisplay(venue, `/?stage=${encodeURIComponent(view.stage.id)}`);
+  const tvUrl = venueJoinUrl(venue, `/tv?stage=${encodeURIComponent(view.stage.id)}`);
   return (
     <section className="panel invite">
       <h2>Sign-up link</h2>
       <div className="invite-row">
         <QrCode text={join.url} size={140} />
         <div>
-          <div className="big-code">{view.code}</div>
-          <p className="muted small break">{join.roomShort ?? join.url}</p>
+          <p className="muted small break">{join.short}</p>
           <p className="small">
             <a href={tvUrl} target="_blank" rel="noreferrer">
-              Open the TV view ↗
+              Open this stage's TV view ↗
             </a>
-          </p>
-          <p className="muted small">
-            {view.patrons} phone{view.patrons === 1 ? "" : "s"} · {view.tableCount} TV{view.tableCount === 1 ? "" : "s"}
           </p>
         </div>
       </div>
@@ -426,7 +442,7 @@ function InvitePanel({ view }: { view: RoomView }) {
   );
 }
 
-function HistoryPanel({ view, act }: { view: RoomView; act: Act }) {
+function HistoryPanel({ view, run }: { view: StageView; run: Run }) {
   if (view.history.length === 0) return null;
   return (
     <section className="panel">
@@ -441,7 +457,7 @@ function HistoryPanel({ view, act }: { view: RoomView; act: Act }) {
               <strong>{e.name}</strong> <EntryDetail e={e} />
             </span>
             <span className={`muted small status-${e.status}`}>{STATUS_LABEL[e.status]}</span>
-            <button className="btn btn-small btn-ghost" onClick={() => act("restoreEntry", e.id)} title="Back in line, at the end">
+            <button className="btn btn-small btn-ghost" onClick={() => run("restore", { entryId: e.id })} title="Back in line, at the end">
               Put back
             </button>
           </li>
@@ -451,102 +467,112 @@ function HistoryPanel({ view, act }: { view: RoomView; act: Act }) {
   );
 }
 
-function SettingsPanel({ view, act }: { view: RoomView; act: Act }) {
-  const s = view.settings;
-  const update = (patch: Partial<RoomSettings>) => act("updateSettings", patch);
-  const num = (k: "maxPerNight" | "minutesPerTurn" | "tvNextCount", { min, max }: { min: number; max: number }) => (
-    <select value={s[k]} onChange={(e) => update({ [k]: Number(e.target.value) })}>
-      {Array.from({ length: max - min + 1 }, (_, i) => min + i).map((n) => (
-        <option key={n} value={n}>
-          {k === "maxPerNight" && n === 0 ? "No limit" : n}
-        </option>
-      ))}
-    </select>
-  );
+/** "New night": clears this stage's list (it replaces closing a room). */
+function NightPanel({ view, run }: { view: StageView; run: Run }) {
+  const started = new Date(view.nightStartedAt).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  const count = view.queue.length + view.history.length + (view.now ? 1 : 0);
   return (
     <section className="panel">
-      <h2>Settings</h2>
-      <div className="seg" role="radiogroup" aria-label="Kind of night">
-        <button role="radio" aria-checked={s.mode === "karaoke"} className={s.mode === "karaoke" ? "on" : ""} onClick={() => update({ mode: "karaoke" })}>
-          🎤 Karaoke
-        </button>
-        <button role="radio" aria-checked={s.mode === "openmic"} className={s.mode === "openmic" ? "on" : ""} onClick={() => update({ mode: "openmic" })}>
-          🎸 Open mic
-        </button>
-      </div>
-      <label className="check">
-        <input type="checkbox" checked={s.oneActive} onChange={(e) => update({ oneActive: e.target.checked })} />
-        One signup per phone at a time
-      </label>
-      <label className="inline">
-        Most signups per phone tonight {num("maxPerNight", LIMITS.maxPerNight)}
-      </label>
-      <label className="inline">
-        Minutes per turn (for the wait estimate) {num("minutesPerTurn", LIMITS.minutesPerTurn)}
-      </label>
-      <label className="inline">
-        Next performers on the TV {num("tvNextCount", LIMITS.tvNextCount)}
-      </label>
+      <h2>New night</h2>
+      <p className="muted small">
+        Clears {view.stage.name}'s list, tonight's history and the per-phone counts, and opens signups. This list started{" "}
+        {started}.
+      </p>
+      <button
+        className="btn btn-danger"
+        onClick={() =>
+          window.confirm(`Start a new night on ${view.stage.name}? ${count ? `The ${count} signup${count === 1 ? "" : "s"} on the list go.` : ""}`) &&
+          run("new-night")
+        }
+      >
+        Start a new night
+      </button>
     </section>
   );
 }
 
-/** Co-hosts (the kit's HostSeats): a single-use invite QR that expires, and the co-host list. */
-function CohostsPanel({ view, act }: { view: RoomView; act: Act }) {
-  const venue = useVenue();
-  const [invite, setInvite] = useState<{ url: string; expiresAt: string; count: number } | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-  const count = view.cohosts.length;
-  const expired = invite ? Date.parse(invite.expiresAt) <= now : false;
-  useEffect(() => {
-    if (!invite) return;
-    const t = setInterval(() => setNow(Date.now()), 15_000);
-    return () => clearInterval(t);
-  }, [invite]);
-  useEffect(() => {
-    if (invite && count > invite.count) setInvite(null);
-  }, [count, invite]);
-  const add = async () => {
-    const res = await act<{ path: string; expiresAt: string }>("cohostInvite");
-    if (!res) return;
-    setNow(Date.now());
-    setInvite({ url: venueJoinUrl(venue, res.path), expiresAt: res.expiresAt, count });
+/**
+ * A guest host's co-hosts (SDK 0.16.0): the box makes the link; show it as a QR to the
+ * co-host only. The venue has to allow co-hosts for this app; the box's refusal is shown as-is.
+ */
+function CohostsPanel({ onError }: { onError: (msg: string) => void }) {
+  const [cohosts, setCohosts] = useState<CohostLink[]>([]);
+  const [name, setName] = useState("");
+  const [invite, setInvite] = useState<{ url: string; label: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    api<{ cohosts: CohostLink[] }>("/api/run/cohosts")
+      .then((r) => setCohosts(r.cohosts))
+      .catch(() => {});
+  }, []);
+  useEffect(load, [load]);
+
+  const add = async (ev: FormEvent) => {
+    ev.preventDefault();
+    setBusy(true);
+    try {
+      const r = await api<{ url: string; label: string }>("/api/run/cohosts", { body: { name: name.trim() } });
+      setInvite({ url: r.url, label: r.label });
+      setName("");
+      load();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "The box refused.");
+    } finally {
+      setBusy(false);
+    }
   };
-  const until = invite ? new Date(invite.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
+  const remove = async (c: CohostLink) => {
+    if (!window.confirm(`Remove ${c.label}? Their link stops working.`)) return;
+    try {
+      await api(`/api/run/cohosts/${encodeURIComponent(c.id)}`, { method: "DELETE" });
+      load();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "The box refused.");
+    }
+  };
+
   return (
     <section className="panel">
       <h2>
-        Co-hosts <span className="muted">({count})</span>
+        Co-hosts <span className="muted">({cohosts.length})</span>
       </h2>
-      <p className="muted small">A co-host runs the list with you, but can't close it or invite others.</p>
-      {invite && !expired ? (
+      <p className="muted small">A co-host runs the list with you. Their link ends when yours does.</p>
+      {invite ? (
         <div className="invite-row">
-          <QrCode text={invite.url} size={160} />
+          <QrCode text={invite.url} size={180} />
           <div>
-            <p>Scan with the co-host's phone.</p>
-            <p className="muted small">Works once, until {until}.</p>
+            <p>
+              Scan with <strong>{invite.label}</strong>'s phone.
+            </p>
+            <p className="muted small">Show this to your co-host only.</p>
             <button className="btn btn-ghost btn-small" onClick={() => setInvite(null)}>
               Hide
             </button>
           </div>
         </div>
       ) : (
-        <button className="btn btn-secondary" onClick={add}>
-          {expired ? "That code expired: make a new one" : "Add a co-host"}
-        </button>
+        <form className="row" onSubmit={add}>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value.slice(0, LIMITS.cohostName))}
+            placeholder="Co-host's name"
+            aria-label="Co-host's name"
+            className="grow"
+          />
+          <button className="btn btn-secondary" disabled={busy || !name.trim()}>
+            Add co-host
+          </button>
+        </form>
       )}
-      {count > 0 && (
+      {cohosts.length > 0 && (
         <ul className="people">
-          {view.cohosts.map((c) => (
+          {cohosts.map((c) => (
             <li key={c.id}>
-              <span className={`dot ${c.connected ? "on" : ""}`} title={c.connected ? "Connected" : "Disconnected"} />
               <span className="grow">
-                {c.name} <span className="badge">Co-host</span>
+                {c.label} <span className="badge">Co-host</span>
               </span>
-              <button
-                className="btn btn-small btn-ghost"
-                onClick={() => window.confirm(`Remove ${c.name} as a co-host?`) && act("removeCohost", c.id)}
-              >
+              <button className="btn btn-small btn-ghost" onClick={() => remove(c)}>
                 Remove
               </button>
             </li>

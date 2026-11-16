@@ -1,132 +1,132 @@
-# Bar Games integration report: Stage Signup 0.1.0
+# Bar Games integration report: Stage Signup 0.2.0
 
-**Level 3**, SDK **0.15.0**, GameKit **0.8.0** (both vendored in `vendor/`). Manifest id
-`signup`, port 3011, `routing.basePath: true`, image `ghcr.io/thezigpc/stage-signup:0.1.0`.
+- **An app** (`"kind": "app"`), **level 2**.
+- **Versions:** SDK **0.16.0**, GameKit **0.9.0** (both vendored in `vendor/`).
+- **Manifest:**
+  - id `signup`, port 3011, `routing.basePath: true`;
+  - image `ghcr.io/thezigpc/stage-signup:0.2.0`;
+  - `guests: { path: "/kj", cohosts: true }`.
 
-It's a module with rooms (`kind` "game", the default): one room per night or event. It only
-keeps the signup queue and never plays media.
+0.1.0 was a game with rooms. 0.2.0 has none: no room codes, `sessionKinds` or commands, and no
+`HostSeats`. It never plays media.
 
-## `npx bargames check`
+## Routes
 
-Against the mock box (`mock-box . --base /signup --port 7321 --core-port 7322 --game http://127.0.0.1:3011`):
+| Route | Page |
+|---|---|
+| `player` `/` | patron signup (a stage picker only when more than one stage is on; `?stage=<id>`) |
+| `table` `/tv` | a stage's "Up next" screen (`?stage=<id>`; with none, or one that's off, the first stage that's on). The box can cast it, use it as an idle screen or start it from a scene. |
+| `host` `/kj` | running the list: staff, or a guest host or co-host (also `guests.path`) |
+| `admin` `/admin` | stages setup, staff only |
+
+## Checks
+
+`npx bargames validate .`: ✓ `signup@0.2.0 (sdk level 2)` (only the expected "not pinned by
+digest" warning).
+
+`npx bargames check` on the mock box (`--base /signup --port 7321 --core-port 7322`):
 
 ```
 ✓ health /health → 200
 ✓ /__bargames/venue.json returns the box's branding ("Stage Signup (mock)")
 ✓ /__bargames/theme.css served
-✓ "room_closed" declared (the box takes a closed room off the TVs at once)
-✓ status refuses requests without the game token
-✓ status → 0 room(s)
-✓ unknown commands are rejected
-✓ command "next_round" is wired (and refuses a missing room)
-✓ command "end" is wired (and refuses a missing room)
-✓ command "host_link" is wired (and refuses a missing room)
-✓ command "cohost_link" is wired (and refuses a missing room)
-✓ command "remove_cohost" is wired (and refuses a missing room)
-✓ create_room → room NEQC (with hostUrl)
-✓ status lists NEQC as a venue room
-✓ table view /join/NEQC?as=table → 200
-✓ host_link answers a new host link each time (take-over)
-✓ cohost_link answers single-use invites that expire
-✓ end closes NEQC
-✓ NEQC left status after "end"
+✓ phone page (routes.player) / → 200
+✓ TV view (routes.table) /tv → 200
 
 all checks passed
 ```
 
-`npx bargames validate .`: ✓ (only the expected "not pinned by digest" warning).
+## Guest hosts (SDK 0.16.0)
 
-## Events
+- **The run controls** are HTTP, at `/api/run/*`, behind the kit's
+  `staffOrGuest({ auth, guest: bg.guest, trusted: bg.isStaff })`, so every request is checked.
+  They are next, done, now on, skip, to the end, put back, move, add a walk-up, edit, pause or
+  open signups, the message, and New night.
+- **Staff-only routes:** `adminRouter` (the stages: name, on/off, order, mode, limits) stays
+  staff only. A guest's `/api/admin/*` gets 401, and `/admin` shows them the sign-in form.
+- **The live view:** a socket that shows the host page only gets the private view (open-mic
+  notes and history) while it holds a **lease**. The page renews the lease every 60 s through
+  `/api/run/lease`, and the guest check runs there each time. When a guest link ends, the next
+  action is refused and the private view stops within 150 s, even on an open socket. Patrons
+  and TVs get the public view.
+- **Co-hosts:**
+  - The guest host's `/kj` shows "Add co-host" with a name field. `bg.guests.addCohost(req, name)`
+    returns a `url`, which the page shows as a QR code.
+  - When the venue hasn't turned co-hosts on, the box's error message is shown as-is.
+  - The host lists their own co-hosts (`bg.guests.list()` filtered by `parentId`) and can remove
+    them (`bg.guests.revoke`).
+  - Co-hosts get the run controls but can't add anyone (403).
+- **Off a box** guests never exist (`bg.guest` is ignored), and staff use the app's own admin
+  password. The tests check that spoofed guest and staff headers get 401.
 
-All the events carry `sessionKind`. Data is names that people typed, song and artist only;
-the open-mic note never leaves the room.
+## Events (declared)
 
-| Event | Where | `data` |
+None of these events has a `roomCode`. Each carries the `stage` id. They contain only names
+and songs that people typed: the open-mic note never leaves the app.
+
+| Event | When | `data` |
 |---|---|---|
-| `room_created`, `room_closed`, `players_changed` | the kit's `wireBarGames` from the registry | kit's shapes (`players` = patron phones) |
-| `x-signup-added` | `Room.enqueue` (`server/src/rooms/Room.ts`) | `{ name, waiting, byHost }` |
-| `round_started` | `Room.bringUp` | `{ round, name }` (round = performer number tonight) |
-| `x-signup-next` | `Room.bringUp` | `{ round, name, song?, artist?, with?, mode, waiting }` |
-| `round_ended` | `Room.leaveStage` | `{ round, name, result: "done" \| "skipped" \| "moved" }` |
+| `x-signup-added` | a signup or walk-up joins a list | `{ stage, name, waiting, byHost }` |
+| `x-signup-next` | a performer goes on stage | `{ stage, round, name, song?, artist?, with?, mode, waiting }` |
+| `x-signup-ended` | a performer comes off | `{ stage, round, name, result: "done" \| "skipped" \| "moved" }` |
+| `x-signup-waiting` | the waiting count changed (at most every 2 s per stage) | `{ stage, waiting }`, with no names |
+| `x-signup-paused` | signups paused or opened | `{ stage, paused }` |
+| `x-signup-new-night` | a stage's list was cleared | `{ stage }` |
 
-Scenes and lights can follow `x-signup-next` (a performer is up) and `round_ended`.
+## Data on the box
 
-## Commands
+`/data` holds:
+- `admin.json`, as before;
+- `stages.json`, the stages' setup;
+- `tonight.json`, tonight's lists, saved 0.5 s after a change and on SIGTERM.
 
-| Command | Room method | Refuses |
-|---|---|---|
-| `create_room` | `createVenueRoom` (registry): a venue room with an empty host seat ("Venue") and `HostSeats({ firstJoinerHosts })`; `hostUrl` = `/join/<code>?host=<key>` | the room cap |
-| `next_round` | `Room.nextPerformer()`, the host's "Next performer": the current performer is done and the first in line goes up | unknown room; nobody on stage and nobody waiting |
-| `end` | kit: closes like the host's close (cause `host`, "The host closed tonight's list.") | unknown room |
-| `host_link` / `cohost_link` / `remove_cohost` | kit `HostSeats`, then `Room.takeOver` / `Room.demoteCohost` and a broadcast | unknown room; not a co-host |
+An update or restart keeps the queue.
 
-There's no `start`, `pause` or `resume`: a list has no lobby or automatic progress. Pausing
-*signups* is a host button; see the SDK requests.
-
-**Status:** the kit's `overviews()`.
-- `phase`: `"open"` or `"paused"` (signups).
-- `round`: performers so far.
-- `players`: patron phones.
-- `title`: "<title> · Now: <name> · N waiting".
-- `joinPath`: `/join/<code>`.
-
-## Table route
-
-`/join/{code}?as=table`
-- [x] The URL alone joins as the TV: no name prompt and no gesture.
-- [x] No audio.
-- [x] Fills the screen with no scrolling, text 3vh or more, and 4–5% margins. Checked in a
-  browser with nothing off-screen at 1920×1080, 1366×768, 1280×720, 3840×2160 and portrait
-  1080×1920.
-- [x] Recovers on its own: the kit's `useRoomConnection` resumes on every reconnect, and
-  `tableMode` shows its banner on a box.
-- [x] Static: no animation, and it only redraws when the list changes.
-- [x] Nothing assumes a pointer: the TV has no buttons.
-
-It shows:
-- now performing;
-- the next N people (the host picks 3–5);
-- the QR code and `JoinAddress` (the box's short room link when there is one);
-- the code;
-- the host's message and "Signups paused";
-- the venue's logo;
-- the announcement strip (it subtracts `--bargames-announcement-top/bottom`).
-
-## Container
-
-- `node:22-slim`, `USER node`, and it only writes to `DATA_DIR` (`/data`: `admin.json`,
-  `settings.json`).
-- The queue lives in memory.
-- **Not built locally:** Docker isn't installed on the dev PC. The first build is the GitHub
-  workflow's.
-
-## Standalone
-
-- No `BG_*` env: `venue.json` says standalone, the command and status endpoints refuse, the
-  name is `GAME_NAME` or "Stage Signup", and a spoofed staff header is ignored. Tested in
-  `test/specs/05-bargames.test.mjs`.
-- The same browser flow passes at the root standalone and under `/signup` on the mock box.
-- Its own admin password: `ADMIN_PASSWORD` or first-run setup. On a box the venue's password
-  works too (kit 0.5.1 `onBox`).
+**Upgrading from 0.1.0:** its `settings.json` (room idle time) is ignored. With no
+`stages.json`, the app starts with one stage, "Main stage". Its admin password carries over.
+Old room links (`/join/ABCD`) land on the signup page.
 
 ## Tests
 
-`npm test`: 33 tests in 5 files.
-- the queue;
-- the limits;
-- co-hosts;
-- admin;
-- the box: commands (good room, unknown room, wrong state), events, `create_room`,
-  first-joiner hosting, take-over, co-host links, and the venue password.
+- **`npm test`:** 28 tests in 4 files: the list, limits and privacy (with lease expiry),
+  stages (restart and the 0.1.0 data dir), and the box. The box tests use a fake core with
+  guest-link endpoints: a guest host, a co-host, box staff, the co-host links (refused, made,
+  listed, revoked), events, and the venue password.
+- **Browser walk-through on the mock box** (all passing, no console errors):
+  - three phones sign up with no picker;
+  - the TV;
+  - `/__bargames/guest?name=Dana` lands on `/kj` as a guest host, who drags to reorder,
+    brings people up, pauses signups and posts a message (and a new phone sees "Signups are
+    paused");
+  - the guest host adds a walk-up;
+  - the guest host adds co-host "Sam" (QR shown); Sam's link opens `/kj` as a co-host, who
+    marks a performer done; the host removes Sam, and Sam's next action is refused;
+  - the guest gets the sign-in form at `/admin`;
+  - staff sign in with the box password and add "Patio" (open mic); a phone sees the picker
+    and signs up; the Patio TV hides the note; the host page gets stage tabs; turning Patio off
+    tells the phone, and the Patio TV falls back to Main stage;
+  - New night clears the list.
+- **Screen sizes:** the TV has no overflow at 1920×1080, 1280×720, 4K or portrait, and the
+  phone pages have no sideways scroll at 320 px.
+- **Standalone:** staff set the app password, run the list from `/kj`, and the TV follows.
+  `/kj` with no session is refused.
 
-## SDK requests
+## Container
 
-1. **Standard commands for pausing signups / intake.** `pause`/`resume` mean "automatic
-   progress" today. A signup list (and maybe a trivia or tournament sign-up) would like the
-   iPad to pause and open *joining*. Either say that `pause`/`resume` may mean "pause intake"
-   for queue-type modules, or add `pause_signups`/`resume_signups`.
-2. **A standard "message to the room" command** (`room_message { text }`), so staff can put
-   "10 minute break" on a room's TV and phones from the box. Every module would draw it its
-   own way.
-3. **An event for "the queue changed"** with no per-person data, if Home Assistant wants a
-   "N waiting" sensor. For now `x-signup-added` carries `waiting`, and `x-signup-next` does too.
+- Image `node:22-slim`, running as `USER node`. It writes only to `DATA_DIR`.
+- Not built locally (no Docker on this PC); the GitHub workflow builds it.
+
+## Platform gaps
+
+1. **Revoked guests on open sockets.** `bg.guest(req)` can be checked per HTTP request, but a
+   WebSocket's handshake headers never change. I worked around it with a short lease renewed
+   over HTTP. Either of these would let apps do without one:
+   - the gateway closes a guest's WebSocket when their link ends;
+   - or an SDK `bg.guests.valid(id)`.
+2. **`GuestInfo` and the other guest types** are exported from `@bargames/sdk`, but not from
+   `@bargames/sdk/server`, where `bg.guest` lives.
+3. **`bargames check` for apps** doesn't exercise `guests`. It could open `guests.path` through
+   `/__bargames/guest?name=…` and check it answers 200, and `addCohost` with and without the
+   venue's switch.
+4. **The SDK's `addCohost`** doesn't refuse a co-host caller itself (it relies on the box). The
+   app checks `role === "host"` before calling it.

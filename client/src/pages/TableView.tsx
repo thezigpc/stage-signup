@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { isOnBox, joinDisplay } from "@bargames/sdk/client";
 import { JoinAddress } from "@bargames/gamekit/client";
-import type { RoomView } from "@signup/shared";
+import type { StageView } from "@signup/shared";
 import { EntryDetail } from "../components/bits";
 import { QrCode } from "../components/QrCode";
 import { useGameName } from "../useGameName";
@@ -36,26 +36,28 @@ function useWakeLock(off: boolean) {
  * Built for 1080p seen across a room: fills the screen, never scrolls, no buttons, sized in vh.
  * Static: it only changes when the list does.
  */
-export function TableView({ view }: { view: RoomView; skew: number }) {
+export function TableView({ view }: { view: StageView }) {
   const gameName = useGameName();
   const venue = useVenue();
   const onBox = isOnBox(venue);
   useWakeLock(onBox);
   const logo = onBox ? venue.game.theme.logoUrl : undefined;
-  const join = joinDisplay(venue, `/join/${view.code}`, view.code);
-  const next = view.queue.slice(0, view.settings.tvNextCount);
+  // The patron page for this stage (with one stage the param is simply ignored).
+  const join = joinDisplay(venue, `/?stage=${encodeURIComponent(view.stage.id)}`);
+  const next = view.queue.slice(0, view.config.tvNextCount);
   const more = view.queue.length - next.length;
-  const karaoke = view.settings.mode === "karaoke";
+  const karaoke = view.stage.mode === "karaoke";
 
   return (
     <div className="tv">
       <header className="tv-top">
         {logo && <img className="tv-logo" src={logo} alt="" />}
-        <h1 className="tv-title">{view.title ?? gameName}</h1>
-        {!view.settings.signupsOpen && <span className="tv-paused">Signups paused</span>}
+        <h1 className="tv-title">{view.stage.name}</h1>
+        <span className="tv-app">{gameName}</span>
+        {!view.live.signupsOpen && <span className="tv-paused">Signups paused</span>}
       </header>
 
-      {view.settings.message && <div className="tv-message">📣 {view.settings.message}</div>}
+      {view.live.message && <div className="tv-message">📣 {view.live.message}</div>}
 
       <section className="tv-now">
         <div className="tv-label">{view.now ? "Now performing" : "The stage is open"}</div>
@@ -96,10 +98,10 @@ export function TableView({ view }: { view: RoomView; skew: number }) {
       <aside className="tv-join">
         <QrCode text={join.url} size={220} className="tv-qr" />
         <div className="tv-join-text">
-          <div className="tv-join-call">{view.settings.signupsOpen ? "Sign up on your phone" : "Signups paused"}</div>
-          <JoinAddress url={join.roomShort ?? join.short} minScale={0.8} lines={2} align="start" className="tv-join-url" />
+          <div className="tv-join-call">{view.live.signupsOpen ? "Sign up on your phone" : "Signups paused"}</div>
+          <JoinAddress url={join.short} minScale={0.8} lines={2} align="start" className="tv-join-url" />
           <div className="tv-code">
-            Code <strong>{view.code}</strong>
+            <strong>{view.queue.length}</strong> waiting
           </div>
         </div>
       </aside>

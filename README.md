@@ -1,37 +1,44 @@
 # Stage Signup
 
-A signup queue for karaoke and open mic nights. Patrons put themselves on the list from their
-phones; the TV shows who's on now and who's next; the host reorders, skips, marks people done
-and pauses signups.
+A signup list for karaoke and open mic nights.
+- **Patrons** put themselves on the list from their phones.
+- **The TV** shows who's on now and who's next.
+- **Whoever runs the night** reorders the list, skips people, marks them done and pauses
+  signups. That's the staff, or a guest host.
 
 It doesn't play music or videos. The venue keeps using whatever it already uses (the YouTube
 app, CDG files, a band).
 
-Runs on its own as a plain web app, or as a module on a Bar Games venue box (see
+It runs on its own as a plain web app, or as an **app** on a Bar Games venue box (see
 [BARGAMES.md](BARGAMES.md)).
 
-## What it does
+## Pages
 
-- **Patrons** scan the QR code (or type the 4-letter code) and sign up:
-  - a name or stage name;
-  - karaoke: the song and artist; open mic: a free note that only the host sees;
-  - optionally "with a friend" (a duet or group).
+| Page | Who | What |
+|---|---|---|
+| `/` | patrons | Sign up: a name or stage name, then the song and artist (karaoke) or a note only the host sees (open mic), and optionally "with a friend". They see their place in line and an estimated wait, and can drop out. There's no code to type. With one stage there's no picker; `/?stage=<id>` goes straight to a stage. |
+| `/tv?stage=<id>` | the TV | Now performing, the next 3–5 people, the QR code and address, the number waiting, and the host's message. With no stage given, or one that's off, it shows the first stage that's on. |
+| `/kj` | staff or a guest host | Run the list (details below). |
+| `/admin` | staff only | The stages: name, on/off, order, karaoke or open mic, the per-phone limits, the minutes per turn, and how many names the TV shows. |
 
-  They see their place in line and an estimated wait, and can drop out.
-- **The host:**
-  - drags the list to reorder it (or uses the arrow keys on the handle);
-  - has "Next performer", "Now on", "Done", "Skip", "Move to end" and "Put back";
-  - can pause signups and post a message to the queue ("10 minute break");
-  - can add someone by hand (no phone needed), or edit an entry;
-  - sets the limits: one signup per phone at a time, and the most signups per phone per night.
+On `/kj` you can:
+- drag the list to reorder it (or use the arrow keys on the handle);
+- use "Next", "Now on", "Done", "Skip", "Move to end" and "Put back";
+- add a walk-up and edit an entry;
+- pause signups and post a message to the queue;
+- start a "New night", which clears that stage's list.
 
-  Co-hosts can run the list too (a single-use invite QR), but they can't close it.
-- **The TV** (`/join/<CODE>?as=table`) shows:
-  - who's performing now and the next 3–5 people;
-  - the join QR code and address;
-  - the host's message, and the venue's theme and announcements when it runs on a box.
-- **Admin** (`/admin`): the open lists and the auto-close time. The password comes from
-  `ADMIN_PASSWORD`, or is set once on first visit.
+**Who runs the list:** staff sign in on `/admin` with the app's password (`ADMIN_PASSWORD`, or
+set once on first visit), then open `/kj`. On a Bar Games box, staff can also give a patron a
+**guest link**:
+- The guest host gets `/kj` only. They can't open `/admin`.
+- They can add co-hosts, who get the same controls but can't add anyone.
+
+Each patron is a device id kept in the phone's browser. Their place in line and the limits
+follow that id, across tabs and a rescanned QR code.
+
+Stages are kept in `DATA_DIR/stages.json`, and tonight's lists in `DATA_DIR/tonight.json`. Both
+are saved within half a second of a change, so a restart or update keeps the queue.
 
 ## Run it
 
@@ -41,19 +48,16 @@ npm run build
 npm start -w server        # http://localhost:3011
 ```
 
-Development: `npm run dev` (Vite on :5181, server on :3011). Tests: `npm test` (after a build).
-
-Docker: `docker compose up -d --build` (publishes to `127.0.0.1:3011`; put your own proxy or
-tunnel in front). The bind-mounted `./data` must be owned by uid 1000.
+- **Development:** `npm run dev` (Vite on :5181, server on :3011).
+- **Tests:** `npm test` (after a build).
+- **Docker:** `docker compose up -d --build`. It publishes to `127.0.0.1:3011`, so put your own
+  proxy or tunnel in front. The bind-mounted `./data` must be owned by uid 1000.
 
 | Env | Default | |
 |---|---|---|
 | `PORT` | 3011 | |
-| `DATA_DIR` | `./data` | admin password hash and settings |
+| `DATA_DIR` | `./data` | admin password hash, stages, tonight's lists |
 | `GAME_NAME` | Stage Signup | the name on every page |
 | `ADMIN_PASSWORD` | (unset) | overrides the one set on `/admin` |
 | `BASE_PATH` | (unset) | serve under a path behind your proxy, e.g. `/signup` |
-| `ROOM_IDLE_MINUTES` | 360 | default auto-close time (admin can change it) |
 | `SIGNUPS_PER_MINUTE_PER_IP` | 60 | flood guard; behind Cloudflare a whole bar shares one IP |
-
-Lists live in memory: a restart clears tonight's queue.

@@ -1,23 +1,21 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { basePath, ErrorBoundary, VenueAnnouncement } from "@bargames/gamekit/client";
 import { AdminPage } from "./pages/AdminPage";
-import { HomePage } from "./pages/HomePage";
-import { RoomPage } from "./pages/RoomPage";
+import { KjPage } from "./pages/KjPage";
+import { PatronPage } from "./pages/PatronPage";
+import { TvPage } from "./pages/TvPage";
 import { useVenue } from "./useVenue";
 import "./index.css";
 
 /**
- * Bar Games: the venue theme everywhere, and the staff's announcement strip on every page
- * (it follows the announcement's "show": phones, TVs or both). Off a box it renders nothing.
+ * Bar Games: the venue theme everywhere, and the staff's announcement strip on every page.
+ * It follows the announcement's "show" (phones, TVs or both): the TV page is marked a
+ * shared screen by tableMode. Off a box it renders nothing.
  */
 function Venue() {
-  const venue = useVenue();
-  const { search } = useLocation();
-  // A ?as=table link is about to join as a TV; the room page marks the screen once it has.
-  const tableLink = new URLSearchParams(search).get("as") === "table";
-  return <VenueAnnouncement ctx={venue} hidden={tableLink} />;
+  return <VenueAnnouncement ctx={useVenue()} />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -26,10 +24,11 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <BrowserRouter basename={basePath()}>
         <Venue />
         <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/join/:code" element={<HomePage />} />
-          <Route path="/room/:code" element={<RoomPage />} />
+          <Route path="/" element={<PatronPage />} />
+          <Route path="/tv" element={<TvPage />} />
+          <Route path="/kj" element={<KjPage />} />
           <Route path="/admin" element={<AdminPage />} />
+          {/* 0.1.0's room links (/join/ABCD, /room/ABCD) land on the signup page. */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

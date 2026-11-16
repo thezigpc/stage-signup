@@ -3,16 +3,17 @@ import { existsSync } from "fs";
 import express from "express";
 import { Server } from "socket.io";
 import { DEFAULT_GAME_NAME } from "@signup/shared";
-import { installShutdown, log, serveSpa, SOCKET_SERVER_OPTIONS } from "@bargames/gamekit/server";
-import { CLIENT_DIST_PATH, PORT } from "./config.js";
-import { createRooms } from "./rooms/registry.js";
+import { log, serveSpa, SOCKET_SERVER_OPTIONS } from "@bargames/gamekit/server";
+import { CLIENT_DIST_PATH, PORT, SAVE_DELAY_MS, store } from "./config.js";
 import { adminAuth, adminRouter } from "./admin/routes.js";
-import { initAdminSettings } from "./admin/settings.js";
+import { runRouter } from "./run/routes.js";
 import { registerSocketHandlers, type IO } from "./socket/index.js";
-import { bg, displayName, registerBarGames } from "./bargames.js";
+import { bg, displayName, emitStageEvent, noteWaiting } from "./bargames.js";
+import { Stages } from "./stages/registry.js";
 
-await initAdminSettings();
 await adminAuth.init();
+const stages = new Stages(store, SAVE_DELAY_MS);
+await stages.init();
 
 const app = express();
 const httpServer = createServer(app);
@@ -22,24 +23,29 @@ const io: IO = new Server(httpServer, {
   maxHttpBufferSize: 64 * 1024,
 });
 
-const rooms = createRooms({
-  sendState: (socketId, view) => io.to(socketId).emit("state", view),
-  sendClosed: (socketId, reason) => io.to(socketId).emit("closed", { reason }),
-  sendNotice: (socketId, message) => io.to(socketId).emit("notice", { message }),
-});
+const live = registerSocketHandlers(io, stages);
+stages.onChange = (id, gone) => {
+  live.broadcast(id, gone);
+  const s = stages.get(id);
+  if (s) noteWaiting(s);
+};
+stages.onEvent = (stage, e) => emitStageEvent(stage, e);
 
-// Bar Games: /__bargames/* (venue.json, theme.css, command, status). Before the SPA
-// catch-all, which would otherwise swallow those paths. A no-op standalone.
+// Bar Games: /__bargames/* (venue.json, theme.css, status). Before the SPA catch-all.
+// A no-op standalone.
 app.use(bg.middleware());
-registerBarGames(rooms);
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, rooms: rooms.size });
+  res.json({ ok: true, stages: stages.all().length });
 });
-app.use("/api/admin", adminRouter(rooms));
 app.get("/api/config", async (_req, res) => {
   res.json({ gameName: await displayName(process.env.GAME_NAME || DEFAULT_GAME_NAME) });
 });
+app.get("/api/stages", (_req, res) => {
+  res.json({ ok: true, stages: stages.publicList() });
+});
+app.use("/api/admin", adminRouter(stages));
+app.use("/api/run", runRouter({ auth: adminAuth, stages, lease: live.lease }));
 
 if (existsSync(CLIENT_DIST_PATH)) {
   // The built client; under a path prefix (BG_BASE_PATH / BASE_PATH) the page gets its <base href>.
@@ -48,16 +54,23 @@ if (existsSync(CLIENT_DIST_PATH)) {
   log.warn("boot", "client build not found; serving API only", { path: CLIENT_DIST_PATH });
 }
 
-registerSocketHandlers(io, rooms);
-
 httpServer.listen(PORT, () => {
-  log.info("boot", "listening", { port: PORT, onBox: bg.connected });
+  log.info("boot", "listening", { port: PORT, onBox: bg.connected, stages: stages.all().length });
 });
 
-installShutdown(rooms, {
-  restartReason: "The list is restarting for an update. Your place is not kept: please sign up again in a minute.",
-  crashReason: "Something went wrong and the list had to restart. Please sign up again in a minute.",
-  drainMs: 500,
-  flush: () => bg.flush(),
-  beforeExit: () => void io.close(),
-});
+// Deploys and updates: save tonight's lists, flush box events, then exit. The lists come back
+// on start, so a restart doesn't lose the queue.
+let stopping = false;
+async function shutdown(signal: string): Promise<void> {
+  if (stopping) return;
+  stopping = true;
+  log.info("boot", "shutting down", { signal });
+  const hardStop = setTimeout(() => process.exit(0), 3000);
+  hardStop.unref();
+  await stages.flush().catch(() => {});
+  await bg.flush().catch(() => {});
+  io.close();
+  process.exit(0);
+}
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));

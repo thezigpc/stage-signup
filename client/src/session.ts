@@ -1,27 +1,15 @@
 import { createSessionStore } from "@bargames/gamekit/client";
-import type { EntryInput, Role } from "@signup/shared";
+import type { EntryInput } from "@signup/shared";
 
-export interface StoredSession {
-  roomCode: string;
-  token: string;
-  name: string;
-  role: Role;
-}
-
-// The kit's session store: the seat is per tab ("signup_session:<tab id>") and lives in
-// localStorage. Every key starts with "signup_": on a box every game shares the origin.
-export const sessions = createSessionStore<StoredSession>("signup");
-
-export const loadSession = (): StoredSession | null => sessions.load();
-export const saveSession = (s: StoredSession): void => sessions.save(s);
-export const clearSession = (): void => sessions.clear();
+// Per-device preferences. Every key starts with "signup_": on a box every app shares the origin.
+const prefs = createSessionStore("signup");
 
 /**
- * This phone's device id ("signup_device"), sent when joining: a new tab or a rescanned QR
- * code finds the same place in line, and the host's one-per-phone limit holds.
+ * This phone's device id ("signup_device"). It's who a patron is: their place in line and
+ * the host's per-phone limits follow it, across tabs and rescanned QR codes.
  */
 export function deviceId(): string {
-  let id = sessions.pref("device");
+  let id = prefs.pref("device");
   if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) {
     const bytes = new Uint8Array(16);
     try {
@@ -30,11 +18,33 @@ export function deviceId(): string {
       for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
     }
     id = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-    sessions.setPref("device", id);
+    prefs.setPref("device", id);
   }
   return id;
 }
 
-/** The last signup typed on this device ("signup_last"), to prefill the form. */
-export const lastSignup = (): EntryInput => sessions.json<EntryInput>("last") ?? {};
-export const rememberSignup = (e: EntryInput): void => sessions.setJson("last", e);
+/** The last name typed on this device ("signup_last"), to prefill the form. */
+export const lastSignup = (): EntryInput => prefs.json<EntryInput>("last") ?? {};
+export const rememberSignup = (e: EntryInput): void => prefs.setJson("last", e);
+
+/** The stage this host page last ran ("signup_kj_stage"). */
+export const lastRunStage = (): string => prefs.pref("kj_stage");
+export const rememberRunStage = (id: string): void => prefs.setPref("kj_stage", id);
+
+// The admin session (the app's own password, or box staff), per tab. /admin and /kj share it.
+const TOKEN_KEY = "signup_admin_token";
+export const loadAdminToken = (): string => {
+  try {
+    return sessionStorage.getItem(TOKEN_KEY) ?? "";
+  } catch {
+    return "";
+  }
+};
+export const saveAdminToken = (t: string): void => {
+  try {
+    if (t) sessionStorage.setItem(TOKEN_KEY, t);
+    else sessionStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* private mode */
+  }
+};

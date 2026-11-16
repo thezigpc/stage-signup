@@ -1,148 +1,142 @@
-// The host's limits: one signup per phone at a time, the most per night, pausing signups,
-// dropping out, open mic notes, and the same phone finding its seat again.
+// Per-phone limits, dropping out, the device id, notes privacy, the runner's lease, and the
+// signup rate limit.
 import { test, before, after, describe } from "node:test";
 import assert from "node:assert/strict";
-import { startServer, setupRoom, newDevice } from "../harness.mjs";
+import { startServer, newDevice, sleep } from "../harness.mjs";
 
-describe("limits", () => {
-  let server;
-  before(async () => (server = await startServer()));
+describe("limits and privacy", () => {
+  let server, token;
+  before(async () => {
+    server = await startServer();
+    token = await server.staff();
+  });
   after(async () => server.stop());
 
   const song = (name) => ({ name, song: "Song" });
+  const run = (action, body) => server.run(token, "main", action, body);
+  const setStage = (patch) => server.http("/api/admin/stages/main", { method: "PUT", body: patch, token });
 
-  test("one active signup per phone; again after the turn", async () => {
-    const { host, patrons } = await setupRoom(server, 1);
-    const [p] = patrons;
+  test("one active signup per phone; again after the turn; the setting is staff's", async () => {
+    await run("new-night");
+    await setStage({ oneActive: true, maxPerNight: 0 });
+    const p = await server.patron();
     await p.ok("signUp", song("Ann"));
     let v = await p.waitFor((x) => x.mine.length === 1 && !x.gate.ok, "gate closes");
     assert.match(v.gate.reason, /already on the list/i);
-    const again = await p.emit("signUp", song("Ann 2"));
-    assert.equal(again.ok, false);
-    assert.match(again.error, /already on the list/i);
-
-    await host.ok("nextPerformer");
+    assert.equal((await p.emit("signUp", song("Ann 2"))).ok, false);
+    await run("next");
     assert.equal((await p.emit("signUp", song("Ann 2"))).ok, false, "still active while on stage");
-    await host.ok("finishCurrent");
-    v = await p.waitFor((x) => x.gate.ok, "gate opens after the turn");
+    await run("done");
+    await p.waitFor((x) => x.gate.ok, "gate opens after the turn");
     await p.ok("signUp", song("Ann 2"));
-
-    // Turned off: several at once.
-    await host.ok("updateSettings", { oneActive: false });
+    await setStage({ oneActive: false });
     await p.ok("signUp", song("Ann 3"));
-    v = await host.waitFor((x) => x.queue.length === 2);
+    await setStage({ oneActive: true });
   });
 
-  test("most signups per phone tonight; drop-outs don't count", async () => {
-    const { host, patrons } = await setupRoom(server, 1);
-    const [p] = patrons;
-    await host.ok("updateSettings", { oneActive: false, maxPerNight: 2 });
+  test("most signups per phone per night; drop-outs don't count; walk-ups aren't limited", async () => {
+    await run("new-night");
+    await setStage({ oneActive: false, maxPerNight: 2 });
+    const p = await server.patron();
     const first = await p.ok("signUp", song("A"));
     await p.ok("dropOut", first.entryId);
     await p.ok("signUp", song("B"));
     await p.ok("signUp", song("C"));
     const v = await p.waitFor((x) => !x.gate.ok, "limit");
     assert.match(v.gate.reason, /limit/i);
-    const over = await p.emit("signUp", song("D"));
-    assert.equal(over.ok, false);
-    assert.match(over.error, /limit/i);
-    assert.equal(v.mine.length, 3);
+    assert.match((await p.emit("signUp", song("D"))).error, /limit/i);
     assert.equal(v.mine.find((e) => e.name === "A").status, "dropped");
-    // The host can still add them by hand.
-    await host.ok("addEntry", song("D"));
-    assert.equal((await host.emit("updateSettings", { maxPerNight: 99 })).ok, false, "out of range");
-    assert.equal((await host.emit("updateSettings", { minutesPerTurn: 0 })).ok, false, "out of range");
-    assert.equal((await host.emit("updateSettings", { mode: "disco" })).ok, false);
-  });
-
-  test("pausing signups; the host's message; the line keeps its place", async () => {
-    const { host, patrons } = await setupRoom(server, 2);
-    const [p, q] = patrons;
-    await p.ok("signUp", song("Ann"));
-    await host.ok("setSignupsOpen", false);
-    await host.ok("setMessage", "  10 minute   break ");
-    const v = await q.waitFor((x) => !x.settings.signupsOpen && x.settings.message, "paused with a message");
-    assert.equal(v.settings.message, "10 minute break");
-    assert.match(v.gate.reason, /paused/i);
-    const refused = await q.emit("signUp", song("Bo"));
-    assert.equal(refused.ok, false);
-    assert.match(refused.error, /paused/i);
-    assert.equal(v.queue.length, 1, "Ann keeps her place");
-    await host.ok("addEntry", song("Walk-in"));
-    await host.ok("setSignupsOpen", true);
-    await host.ok("setMessage", "");
-    await q.ok("signUp", song("Bo"));
-    const after = await host.waitFor((x) => x.queue.length === 3 && x.settings.message === "");
-    assert.deepEqual(
-      after.queue.map((e) => e.name),
-      ["Ann", "Walk-in", "Bo"],
-    );
+    assert.equal((await run("add", song("D"))).ok, true);
+    await setStage({ oneActive: true, maxPerNight: 0 });
   });
 
   test("dropping out: only your own, only while waiting", async () => {
-    const { host, patrons } = await setupRoom(server, 2);
-    const [p, q] = patrons;
+    await run("new-night");
+    const [p, q] = [await server.patron(), await server.patron()];
     const { entryId } = await p.ok("signUp", song("Ann"));
     assert.equal((await q.emit("dropOut", entryId)).ok, false, "someone else's");
-    await host.ok("nextPerformer");
-    const onStage = await p.emit("dropOut", entryId);
-    assert.equal(onStage.ok, false, "on stage");
-    await host.ok("moveToEnd", entryId);
+    await run("next");
+    assert.equal((await p.emit("dropOut", entryId)).ok, false, "on stage");
+    await run("to-end", { entryId });
     await p.ok("dropOut", entryId);
-    const v = await host.waitFor((x) => x.queue.length === 0 && x.history.some((e) => e.status === "dropped"));
-    assert.equal(v.history[0].name, "Ann");
+    await p.waitFor((x) => x.queue.length === 0 && x.mine[0].status === "dropped");
   });
 
-  test("the same phone (device id) gets its seat back; another phone doesn't", async () => {
-    const { code, host } = await setupRoom(server, 0);
+  test("the device id is who you are: a new tab finds its place; another phone doesn't", async () => {
+    await run("new-night");
     const device = newDevice();
-    const a = await server.client();
-    const first = await a.ok("joinRoom", { code, role: "patron", device });
+    const a = await server.patron("", device);
     await a.ok("signUp", song("Ann"));
     a.socket.close();
-
-    // A new tab (no stored seat), same device: same seat, still in line, limit still holds.
-    const b = await server.client();
-    const again = await b.ok("joinRoom", { code, role: "patron", device });
-    assert.equal(again.memberId, first.memberId);
+    const b = await server.patron("", device);
     const v = await b.waitFor((x) => x.mine.length === 1);
     assert.equal(v.mine[0].status, "waiting");
     assert.equal(v.queue[0].mine, true);
     assert.equal((await b.emit("signUp", song("Ann again"))).ok, false);
 
-    const other = await server.client();
-    const o = await other.ok("joinRoom", { code, role: "patron", device: newDevice() });
-    assert.notEqual(o.memberId, first.memberId);
+    const other = await server.patron();
     const ov = await other.waitFor((x) => x.queue.length === 1);
     assert.equal(ov.queue[0].mine, false);
     assert.equal(ov.mine.length, 0);
 
-    // A malformed device id is ignored (a new seat), never matched.
-    const bad = await server.client();
-    const b2 = await bad.ok("joinRoom", { code, role: "patron", device: "x" });
-    assert.notEqual(b2.memberId, first.memberId);
-    await host.waitFor((x) => x.patrons === 3, "three phones");
+    // No (or a malformed) device id: can watch, can't sign up.
+    const bad = await server.patron("", "x");
+    assert.match((await bad.emit("signUp", song("Bad"))).error, /private mode/i);
+    const tv = await server.tv();
+    assert.equal((await tv.emit("signUp", song("TV"))).ok, false, "a TV can't sign up");
   });
 
-  test("open mic: a free note only the host and its writer see", async () => {
-    const { host, patrons } = await setupRoom(server, 2, { mode: "openmic" });
-    const [p, q] = patrons;
+  test("open mic notes: only the runner and the writer see them; the lease ends the runner's view", async () => {
+    await run("new-night");
+    await setStage({ mode: "openmic" });
+    const [p, q] = [await server.patron(), await server.patron()];
     await p.ok("signUp", { name: "Ann", note: "I need a guitar stand", with: "The Bandmates" });
+    const host = await server.runner("main", { token });
     const hv = await host.waitFor((x) => x.queue.length === 1);
-    assert.equal(hv.settings.mode, "openmic");
+    assert.equal(hv.stage.mode, "openmic");
     assert.equal(hv.queue[0].note, "I need a guitar stand");
-    assert.equal(hv.queue[0].with, "The Bandmates");
-    const pv = await p.waitFor((x) => x.queue.length === 1);
-    assert.equal(pv.queue[0].note, "I need a guitar stand");
+    assert.equal((await p.waitFor((x) => x.queue.length === 1)).queue[0].note, "I need a guitar stand");
     const qv = await q.waitFor((x) => x.queue.length === 1);
     assert.equal(qv.queue[0].note, undefined, "other phones don't see the note");
-    assert.equal(qv.history.length, 0, "patrons don't get the host's history");
-    const tv = await server.client();
-    await tv.ok("joinRoom", { code: hv.code, role: "table" });
-    const tvv = await tv.waitFor((x) => x.queue.length === 1);
-    assert.equal(tvv.queue[0].note, undefined, "the TV doesn't show the note");
-  });
+    assert.equal(qv.history.length, 0);
+    const tv = await server.tv();
+    assert.equal(tv.state.queue[0].note, undefined, "the TV doesn't show the note");
 
+    // A runner socket without a lease gets the public view.
+    const sneaky = await server.client();
+    await sneaky.ok("watch", { stage: "main", role: "runner" });
+    const sv = await sneaky.waitFor((x) => x.queue.length === 1);
+    assert.equal(sv.role, "tv");
+    assert.equal(sv.queue[0].note, undefined);
+    // A lease for someone else's socket, or without auth, is refused.
+    assert.equal((await server.http("/api/run/lease", { body: { stage: "main", socketId: sneaky.socket.id } })).status, 401);
+    assert.equal((await server.http("/api/run/lease", { body: { stage: "main", socketId: "nope" }, token })).status, 400);
+    await setStage({ mode: "karaoke" });
+  });
+});
+
+describe("runner lease expiry", () => {
+  let server;
+  // 150 s in production; short here.
+  before(async () => (server = await startServer({ RUNNER_LEASE_MS: "600" })));
+  after(async () => server.stop());
+
+  test("the runner's view falls back to public when the lease isn't renewed", async () => {
+    const token = await server.staff();
+    await server.run(token, "main", "add", { name: "Ann", note: "secret note" });
+    const host = await server.runner("main", { token });
+    assert.equal(host.state.queue[0].note, "secret note");
+    const v = await host.waitFor((x) => x.role === "tv", "lease lapsed", 3000);
+    assert.equal(v.queue[0].note, undefined, "no notes without a lease");
+    // Renewing brings it back.
+    await server.http("/api/run/lease", { body: { stage: "main", socketId: host.socket.id }, token });
+    await host.waitFor((x) => x.role === "runner", "renewed");
+    // Switching role drops it at once.
+    await host.ok("watch", { stage: "main", role: "tv" });
+    await host.ok("watch", { stage: "main", role: "runner" });
+    await sleep(50);
+    assert.equal(host.state.role, "tv", "no lease until the page renews it");
+  });
 });
 
 describe("signup rate limit", () => {
@@ -151,11 +145,9 @@ describe("signup rate limit", () => {
   after(async () => server.stop());
 
   test("signups are rate limited per IP", async () => {
-    const { code } = await setupRoom(server, 0);
     const results = [];
     for (let i = 0; i < 6; i++) {
-      const c = await server.client();
-      await c.ok("joinRoom", { code, role: "patron", device: newDevice() });
+      const c = await server.patron();
       results.push(await c.emit("signUp", { name: `P${i}`, song: "Song" }));
     }
     assert.deepEqual(

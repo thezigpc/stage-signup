@@ -1,12 +1,12 @@
-// Socket protocol shared by the server and the client. The server is authoritative: the
-// client renders a RoomView and sends intents; every rule is checked on the server.
+// Protocol shared by the server and the client. The server is authoritative.
+//
+// 0.2.0: an app, not a game. No rooms or room codes: the venue has stages (set up by staff
+// on /admin), each with its own list. Patrons sign up over the socket, keyed by a per-device
+// id. The list is run over HTTP (/api/run), by staff or by a guest host from the box.
 
 export const DEFAULT_GAME_NAME = "Stage Signup";
 
-/** host: runs the queue. cohost: the same, but can't close the room or invite co-hosts. patron: a phone signing up. table: the TV. */
-export type Role = "host" | "cohost" | "patron" | "table";
-
-/** Karaoke takes a song and artist; open mic takes a free note (for the host only). */
+/** Karaoke takes a song and artist; open mic takes a free note (for the hosts only). */
 export type Mode = "karaoke" | "openmic";
 
 /**
@@ -15,15 +15,16 @@ export type Mode = "karaoke" | "openmic";
  */
 export type EntryStatus = "waiting" | "up" | "done" | "skipped" | "dropped";
 
-export interface RoomSettings {
+/** A stage's setup: staff only (the admin page). */
+export interface StageConfig {
+  /** Stable slug, in ?stage= links. */
+  id: string;
+  name: string;
+  enabled: boolean;
   mode: Mode;
-  /** False while the host has paused signups (the host can still add people by hand). */
-  signupsOpen: boolean;
-  /** The host's message to the queue ("10 minute break"), on the TV and phones. "" for none. */
-  message: string;
   /** One signup in line (or on stage) per phone at a time. */
   oneActive: boolean;
-  /** Most signups per phone tonight (done, skipped and in line all count; drop-outs don't). 0 = no limit. */
+  /** Most signups per phone per night (done, skipped and in line count; drop-outs don't). 0 = no limit. */
   maxPerNight: number;
   /** Minutes per turn, for the estimated wait. */
   minutesPerTurn: number;
@@ -31,10 +32,16 @@ export interface RoomSettings {
   tvNextCount: number;
 }
 
-export const DEFAULT_SETTINGS: RoomSettings = {
+/** What the person running the list changes during the night (staff or a guest host). */
+export interface StageLive {
+  signupsOpen: boolean;
+  /** The message to the queue ("10 minute break"), on the TV and phones. "" for none. */
+  message: string;
+}
+
+export const DEFAULT_STAGE: Omit<StageConfig, "id" | "name"> = {
+  enabled: true,
   mode: "karaoke",
-  signupsOpen: true,
-  message: "",
   oneActive: true,
   maxPerNight: 0,
   minutesPerTurn: 5,
@@ -48,11 +55,13 @@ export const LIMITS = {
   note: 140,
   with: 60,
   message: 140,
-  title: 60,
+  stageName: 40,
+  cohostName: 40,
+  stages: 12,
   maxPerNight: { min: 0, max: 20 },
   minutesPerTurn: { min: 1, max: 30 },
   tvNextCount: { min: 3, max: 5 },
-  /** Entries waiting at once. */
+  /** Entries waiting at once, per stage. */
   queue: 300,
 } as const;
 
@@ -70,25 +79,18 @@ export interface EntryView {
   name: string;
   song?: string;
   artist?: string;
-  /** Open mic note: only the host, co-hosts and the patron who wrote it see it. */
+  /** Open mic note: only whoever runs the list and the patron who wrote it see it. */
   note?: string;
   with?: string;
   status: EntryStatus;
   addedAt: number;
-  /** When this entry went on stage (status "up"). */
   startedAt?: number;
-  /** Added by the host by hand (someone without a phone). */
+  /** Added by hand (a walk-up without a phone). */
   byHost: boolean;
   /** This phone's own signup. */
   mine: boolean;
   /** Performer number tonight, once they've been on stage. */
   turn?: number;
-}
-
-export interface PersonView {
-  id: string;
-  name: string;
-  connected: boolean;
 }
 
 /** Whether this phone may sign up right now, and why not. */
@@ -97,123 +99,73 @@ export interface SignupGate {
   reason?: string;
 }
 
-export interface RoomView {
-  code: string;
-  title?: string;
-  you: { id: string; role: Role; name: string };
-  settings: RoomSettings;
-  /** On stage now. */
+export type ViewerRole = "patron" | "tv" | "runner";
+
+export interface StageView {
+  stage: { id: string; name: string; mode: Mode; enabled: boolean };
+  live: StageLive;
+  /** The stage's limits and TV settings (for the wait estimate and the TV). */
+  config: Pick<StageConfig, "oneActive" | "maxPerNight" | "minutesPerTurn" | "tvNextCount">;
+  role: ViewerRole;
   now: EntryView | null;
-  /** In line, in order. */
   queue: EntryView[];
-  /** Done, skipped and dropped, most recent first (hosts only; patrons get their own in `mine`). */
+  /** Done, skipped and dropped, most recent first (runners only). */
   history: EntryView[];
   /** This phone's signups tonight, newest first (patrons). */
   mine: EntryView[];
   gate: SignupGate;
   /** Performers so far tonight. */
   turns: number;
-  /** Patrons (phones) in the room. */
-  patrons: number;
-  tableCount: number;
-  /** Hosts only. */
-  cohosts: PersonView[];
+  /** When "New night" last cleared this list. */
+  nightStartedAt: number;
   serverTime: number;
 }
 
-export interface JoinResult {
-  code: string;
-  token: string;
-  memberId: string;
-  role: Role;
+/** GET /api/stages: the stages patrons can pick from (enabled, in order). */
+export interface PublicStage {
+  id: string;
   name: string;
-}
-
-export interface RoomInfo {
   mode: Mode;
-  title?: string;
 }
 
-export interface AdminRoomSummary {
-  code: string;
-  kind: string;
-  title?: string;
-  createdAt: number;
-  lastActivityAt: number;
-  mode: Mode;
-  signupsOpen: boolean;
-  waiting: number;
-  turns: number;
-  now?: string;
-  hostConnected: boolean;
-  patrons: number;
-  tables: number;
+/** GET /api/run/me: who is running the list. */
+export interface RunnerInfo {
+  /** staff: the app's admin session or box staff. guest: a guest link from the box. */
+  kind: "staff" | "guest";
+  guest?: { id: string; role: "host" | "cohost"; name: string };
+  /** A guest host may add co-hosts (manifest guests.cohosts; the venue's switch is checked when adding). */
+  canAddCohosts: boolean;
 }
 
-export interface AdminSettings {
-  roomIdleMinutes: number;
+export interface CohostLink {
+  id: string;
+  label: string;
+  expiresAt: string;
 }
 
-export interface AdminOverview {
-  rooms: AdminRoomSummary[];
-  settings: AdminSettings;
-  serverTime: number;
+export interface AdminStages {
+  stages: StageConfig[];
 }
-
-export const ADMIN_SETTINGS_LIMITS = {
-  roomIdleMinutes: { min: 5, max: 7 * 24 * 60 },
-} as const;
 
 type Ack<T = object> = (res: ({ ok: true } & T) | { ok: false; error: string }) => void;
 
 export interface ClientToServerEvents {
-  createRoom: (req: { name?: string; mode?: Mode; title?: string }, ack: Ack<JoinResult>) => void;
-  roomInfo: (req: { code: string }, ack: Ack<RoomInfo>) => void;
-  joinRoom: (
-    req: { code: string; role: "patron" | "table"; name?: string; token?: string; device?: string; cohost?: string },
-    ack: Ack<JoinResult>,
-  ) => void;
-  resume: (req: { code: string; token: string }, ack: Ack<JoinResult>) => void;
-  leaveRoom: (ack: Ack) => void;
-  closeRoom: (ack: Ack) => void;
-
-  // patrons
+  /** Sent on EVERY connect: which stage this socket shows, and as what. */
+  watch: (req: { stage: string; role: ViewerRole; device?: string }, ack: Ack<{ stage: string }>) => void;
   signUp: (req: EntryInput, ack: Ack<{ entryId: string }>) => void;
   dropOut: (entryId: string, ack: Ack) => void;
-
-  // host and co-hosts
-  addEntry: (req: EntryInput, ack: Ack<{ entryId: string }>) => void;
-  editEntry: (req: { entryId: string } & EntryInput, ack: Ack) => void;
-  moveEntry: (req: { entryId: string; toIndex: number }, ack: Ack) => void;
-  moveToEnd: (entryId: string, ack: Ack) => void;
-  skipEntry: (entryId: string, ack: Ack) => void;
-  nowOn: (entryId: string, ack: Ack) => void;
-  restoreEntry: (entryId: string, ack: Ack) => void;
-  nextPerformer: (ack: Ack) => void;
-  finishCurrent: (ack: Ack) => void;
-  setSignupsOpen: (open: boolean, ack: Ack) => void;
-  setMessage: (message: string, ack: Ack) => void;
-  updateSettings: (patch: Partial<RoomSettings>, ack: Ack) => void;
-
-  // host only
-  cohostInvite: (ack: Ack<{ path: string; expiresAt: string }>) => void;
-  removeCohost: (memberId: string, ack: Ack) => void;
 }
 
 export interface ServerToClientEvents {
-  state: (view: RoomView) => void;
-  closed: (payload: { reason: string }) => void;
-  notice: (payload: { message: string }) => void;
+  state: (view: StageView) => void;
+  /** The stage was turned off or removed; patrons go back to the picker. */
+  gone: (payload: { reason: string }) => void;
 }
 
 export const ERRORS = {
   BAD_REQUEST: "That request wasn't valid.",
-  ROOM_NOT_FOUND: "There's no room with that code. Check the code and try again.",
-  ROOM_FULL: "This room is full.",
-  NOT_IN_ROOM: "You're not in a room. Join one from the home page.",
-  BAD_TOKEN: "This device's seat in the room has expired. Join again from the home page.",
-  NOT_HOST: "Only the host can do that.",
-  NOT_PATRON: "Only a phone that joined the list can do that.",
+  NO_STAGE: "That stage isn't taking signups. Pick another one.",
+  NO_DEVICE: "This browser can't keep your place (private mode?). Try another browser.",
   NAME_REQUIRED: "Enter a name.",
   SONG_REQUIRED: "Enter the song you'll sing.",
   SIGNUPS_PAUSED: "Signups are paused right now. Try again in a bit.",
@@ -223,8 +175,8 @@ export const ERRORS = {
   NOT_WAITING: "That signup isn't in line any more.",
   NOBODY_UP: "Nobody is on stage right now.",
   QUEUE_EMPTY: "Nobody is waiting in line.",
-  BAD_INVITE: "That co-host link has expired or was already used. Ask the host for a new one.",
   RATE_LIMITED: "Too many tries. Wait a minute and try again.",
+  TOO_MANY_STAGES: "That's the most stages this app keeps.",
 } as const;
 
 export type ErrorCode = keyof typeof ERRORS;
@@ -232,6 +184,18 @@ export type ErrorCode = keyof typeof ERRORS;
 /** Trims, collapses inner whitespace and cuts to `max` characters. Non-strings become "". */
 export function cleanText(v: unknown, max: number): string {
   return typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : "";
+}
+
+/** A stage name → a short id for ?stage= links ("Back Room" → "back-room"). */
+export function slugify(name: string): string {
+  return (
+    name
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 24) || "stage"
+  );
 }
 
 /**

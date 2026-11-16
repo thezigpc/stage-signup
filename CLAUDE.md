@@ -1,44 +1,57 @@
 # Stage Signup
 
-A signup queue for karaoke and open mic, nothing more: patrons sign up from their phones, the
-TV shows now and next, and the host runs the list. **It never plays music or video. Keep it
-that way** (the user's brief).
+A signup list for karaoke and open mic, nothing more.
+- Patrons sign up from their phones.
+- The TV shows now and next.
+- Staff or a guest host run the list.
 
-It's a Bar Games module (id `signup`, port 3011, SDK level 3) that also runs standalone. The
+**It never plays music or video. Keep it that way** (the user's brief).
+
+It's a Bar Games **app** since 0.2.0 (the user's decision, relayed by the GameBroker session on
+2026-11-16): id `signup`, port 3011, SDK level 2, with guest hosts. It also runs standalone. The
 platform is `C:\CodeProjects\GameBroker` (public repo thezigpc/venueplay).
 - **Don't edit** GameBroker, GameKit or other modules.
-- Send platform needs to the "GameBroker Session" as SDK requests (see BARGAMES.md).
+- Send platform needs to the "GameBroker Session" as SDK requests (BARGAMES.md, "Platform gaps").
+
+## Model
+
+- **No rooms.** The venue has **stages**, set up by staff on `/admin` (`stages.json`). Each
+  stage has its own list, saved to `tonight.json` so updates keep the queue, and its own TV
+  (`/tv?stage=<id>`). "New night" clears a stage's list.
+- **Patrons are a device id** (localStorage `signup_device`), sent with the socket's `watch`.
+  No seats or tokens. Per-phone limits key on it.
+- **Running the list is HTTP only:** `/api/run/<stage>/<action>`, behind the kit's
+  `staffOrGuest`.
+  - Staff: the app's admin session (bearer token from `/admin`, same tab), or `bg.isStaff`.
+  - A guest host or co-host: `bg.guest(req)`, checked on **every** request.
+  - The stages setup (`/api/admin/*`) stays staff only.
+- **The runner's private view** (notes, history) reaches a socket only while it holds a lease
+  (`/api/run/lease`, 150 s, which the page renews every 60 s). Off a box, guests never exist.
 
 ## Layout
 
 The same shape as BingoDigitalGame (an npm-workspaces monorepo):
-- `shared/src/protocol.ts`:
-  - the socket events, `RoomView`, `RoomSettings`, `LIMITS` and `ERRORS`;
-  - `cleanText`;
-  - `estimatedWait` (minutes per turn, minus how long the current performer has been up).
-- `server/src/rooms/Room.ts`: the queue state machine.
-  - **Entries** are `waiting | up | done | skipped | dropped`. `queue` holds the waiting ids in
-    order; `nowId` is the one on stage. `bringUp` and `leaveStage` are the only places that
-    change who's on stage, and they emit `round_started`, `x-signup-next` and `round_ended`.
-  - **Roles:** `host`, `cohost`, `patron` and `table`. The kit's `HostSeats` decides who may
-    host.
-  - **Patrons** have a `device` id (per-device localStorage `signup_device`), so a new tab or
-    a rescanned QR code gets the same seat. The per-phone limits key on the member.
-- `server/src/socket/index.ts`: intents. Each runs a Room method and then broadcasts.
-  - **Join attempts:** failed ones are rate-limited per IP.
-  - **Signups:** limited per IP (`SIGNUPS_PER_MINUTE_PER_IP`, default 60, because behind
-    Cloudflare a whole bar shares one IP).
-  - **Leaving:** a patron leaving keeps their place in line; dropping out is separate.
-- `server/src/bargames.ts`: the only SDK connection (`wireBarGames`: `create_room`,
-  `next_round`, `end` and the hosting commands).
+- `shared/src/protocol.ts`: `StageView`, `StageConfig`, `StageLive`, `LIMITS`, `ERRORS`,
+  `cleanText`, `slugify`, `estimatedWait`.
+- `server/src/stages/Stage.ts`: one stage's list. `bringUp` and `leaveStage` are the only
+  places that change who's on stage, and they raise the events. It has `toState`/`loadState`
+  for saving.
+- `server/src/stages/registry.ts`: the stages, their setup, and saving.
+- `server/src/run/routes.ts`: the run controls and a guest host's co-hosts.
+- `server/src/admin/routes.ts`: the kit's admin auth plus the stages CRUD.
+- `server/src/socket/index.ts`: `watch`, `signUp`, `dropOut`, the per-stage broadcast and the
+  lease.
+- `server/src/bargames.ts`: the only SDK connection (`bg`, `guestOf`, the events).
 - `client/`:
-  - React with routes `/`, `/join/:code` and `/room/:code`.
-  - `/join/:code` auto-joins: as a patron by default, as the TV with `?as=table`, and as the
-    host with `?host=<key>`. With `?cohost=` it asks for a name first.
-  - `RoomPage` picks `HostView`, `PatronView` or `TableView`.
-  - **Drag to reorder** in `HostView` uses pointer events on a ⠿ handle (`touch-action: none`;
-    HTML5 drag-and-drop doesn't work on iOS). The arrow keys work on the handle too.
-- `test/`: `npm test` runs node:test specs, and each file spawns its own server. Build first.
+  - routes `/` (`PatronPage`), `/tv` (`TvPage`), `/kj` (`KjPage` → `HostView`) and `/admin`
+    (`AdminPage` → `StagesAdmin`);
+  - `useStage` re-sends `watch` on every connect;
+  - **drag to reorder** uses pointer events on a ⠿ handle (`touch-action: none`), and the
+    arrow keys work too.
+- `test/`: `npm test` runs node:test specs, and each file spawns its own server.
+  - Build first.
+  - `ADMIN_PASSWORD` is "pw" in tests.
+  - The box tests fake the gateway's guest headers.
 
 ## Rules carried over from Bingo
 
@@ -57,6 +70,7 @@ Other sessions run mock boxes too.
 - Check ports with `Get-NetTCPConnection -LocalPort <p>` first.
 - Run the mock box from PowerShell (Git Bash mangles `/signup`):
   `npx bargames mock-box . --base /signup --port 7321 --core-port 7322 --game http://127.0.0.1:3011`.
+- `/__bargames/guest?name=Dana` (add `&as=cohost` for a co-host) makes you a pretend guest.
 - Stop only the PIDs on your own ports, never by name.
 
 Docker isn't installed here.

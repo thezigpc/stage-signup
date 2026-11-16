@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { estimatedWait, type EntryView, type RoomView } from "@signup/shared";
+import { estimatedWait, type EntryView, type StageView } from "@signup/shared";
 
 /** The local clock, ticking every `ms` (server-corrected with `skew`). */
 export function useNow(skew: number, ms = 15_000): number {
@@ -13,9 +13,9 @@ export function useNow(skew: number, ms = 15_000): number {
 }
 
 /** "about 12 min" for the entry at `position` in line (1 = next). */
-export function waitText(view: RoomView, position: number, now: number): string {
+export function waitText(view: StageView, position: number, now: number): string {
   if (position === 1 && !view.now) return "you're next";
-  const min = estimatedWait(position, view.settings.minutesPerTurn, view.now?.startedAt, now);
+  const min = estimatedWait(position, view.config.minutesPerTurn, view.now?.startedAt, now);
   return `about ${min} min`;
 }
 

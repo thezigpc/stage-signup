@@ -862,3 +862,88 @@ button:focus-visible {
     transition: none;
   }
 }
+
+/* ---------------------------------------------------- 0.2.0: stages, app pages */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.7rem 16px;
+  border-bottom: 1px solid var(--line);
+}
+.app-title {
+  font-weight: 800;
+  color: var(--primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.page-pad {
+  padding: 1rem 16px;
+}
+.stage-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.8rem;
+  margin: 0.4rem 0 0.8rem;
+}
+.stage-head h1 {
+  font-size: 1.5rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.stage-picks {
+  display: grid;
+  gap: 0.6rem;
+}
+.stage-tabs {
+  display: flex;
+  gap: 0.4rem;
+  overflow-x: auto;
+  padding: 0.6rem 16px 0;
+  max-width: 760px;
+  margin: 0 auto;
+}
+.stage-tabs button {
+  font: inherit;
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.5rem 1rem;
+  min-height: 44px;
+  cursor: pointer;
+}
+.stage-tabs button.on {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: transparent;
+}
+.section-title {
+  margin: 1.4rem 0 0.3rem;
+}
+.stage-editor.is-off {
+  opacity: 0.75;
+  border-style: dashed;
+}
+.stage-name-input {
+  font-weight: 800;
+  font-size: 1.1rem;
+}
+.tv-app {
+  font-size: 2.6vh;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.tv-blank {
+  display: grid;
+  place-items: center;
+  grid-template-areas: none;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}

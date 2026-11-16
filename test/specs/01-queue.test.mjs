@@ -1,126 +1,160 @@
-// The queue: signing up, the order, now on, next, done, skip, move to end, drag to reorder,
-// put back, and the estimated wait.
+// The list: signing up, the order, now on, next, done, skip, move to end, drag to reorder,
+// put back, New night, and the estimated wait.
 import { test, before, after, describe } from "node:test";
 import assert from "node:assert/strict";
 import { estimatedWait } from "@signup/shared";
-import { startServer, setupRoom, lineOf } from "../harness.mjs";
+import { startServer, lineOf } from "../harness.mjs";
 
-describe("the queue", () => {
-  let server;
-  before(async () => (server = await startServer()));
+describe("the list", () => {
+  let server, token;
+  before(async () => {
+    server = await startServer();
+    token = await server.staff();
+  });
   after(async () => server.stop());
 
   const song = (name, s = "Song") => ({ name, song: s, artist: "Artist" });
+  const run = (action, body) => server.run(token, "main", action, body);
+  const ok = async (action, body) => {
+    const r = await run(action, body);
+    assert.equal(r.ok, true, `${action}: ${r.error}`);
+    return r;
+  };
+  const fresh = async () => ok("new-night");
 
   test("patrons sign up in order; the host brings them up one by one", async () => {
-    const { host, patrons } = await setupRoom(server, 3);
-    const [ann, bo, cy] = patrons;
+    await fresh();
+    const host = await server.runner("main", { token });
+    const [ann, bo, cy] = [await server.patron(), await server.patron(), await server.patron()];
+    assert.equal(ann.state.stage.id, "main", "one stage: no picking");
     await ann.ok("signUp", song("Ann", "Valerie"));
     await bo.ok("signUp", song("Bo"));
     await cy.ok("signUp", song("Cy"));
-    const s = await host.waitFor((v) => v.queue.length === 3, "three in line");
-    assert.deepEqual(lineOf(s), ["Ann", "Bo", "Cy"]);
-    assert.equal(s.now, null);
-    assert.equal(s.queue[0].song, "Valerie");
+    let v = await host.waitFor((x) => x.queue.length === 3, "three in line");
+    assert.deepEqual(lineOf(v), ["Ann", "Bo", "Cy"]);
+    assert.equal(v.queue[0].song, "Valerie");
 
-    await host.ok("nextPerformer");
-    let v = await host.waitFor((x) => x.now?.name === "Ann", "Ann up");
+    await ok("next");
+    v = await host.waitFor((x) => x.now?.name === "Ann", "Ann up");
     assert.equal(v.now.turn, 1);
-    assert.equal(v.turns, 1);
     assert.deepEqual(lineOf(v), ["Bo", "Cy"]);
     const annView = await ann.waitFor((x) => x.mine[0]?.status === "up", "Ann sees she's up");
     assert.equal(annView.now.mine, true);
 
-    await host.ok("nextPerformer");
+    await ok("next");
     v = await host.waitFor((x) => x.now?.name === "Bo", "Bo up");
     assert.equal(v.history[0].name, "Ann");
     assert.equal(v.history[0].status, "done");
 
-    // Done: the stage stays empty.
-    await host.ok("finishCurrent");
+    await ok("done");
     v = await host.waitFor((x) => x.now === null && x.history.length === 2, "stage empty");
-    assert.deepEqual(lineOf(v), ["Cy"]);
-    const nobody = await host.emit("finishCurrent");
-    assert.equal(nobody.ok, false, "nobody on stage");
+    assert.equal((await run("done")).ok, false, "nobody on stage");
 
-    await host.ok("nextPerformer");
-    await host.ok("nextPerformer");
+    await ok("next");
+    await ok("next");
     v = await host.waitFor((x) => x.now === null && x.queue.length === 0, "all done");
     assert.equal(v.turns, 3);
-    const empty = await host.emit("nextPerformer");
+    const empty = await run("next");
     assert.equal(empty.ok, false);
+    assert.equal(empty.status, 400);
     assert.match(empty.error, /waiting/);
   });
 
   test("drag to reorder, move to end, now on, skip and put back", async () => {
-    const { host } = await setupRoom(server, 0);
-    for (const n of ["A", "B", "C", "D"]) await host.ok("addEntry", song(n));
+    await fresh();
+    const host = await server.runner("main", { token });
+    for (const n of ["A", "B", "C", "D"]) await ok("add", song(n));
     let v = await host.waitFor((x) => x.queue.length === 4);
     const ids = Object.fromEntries(v.queue.map((e) => [e.name, e.id]));
-    const id = (name) => ids[name];
+    const id = (n) => ids[n];
 
-    await host.ok("moveEntry", { entryId: id("D"), toIndex: 0 });
-    v = await host.waitFor((x) => lineOf(x).join() === "D,A,B,C", "D first");
-    await host.ok("moveEntry", { entryId: id("D"), toIndex: 99 });
-    v = await host.waitFor((x) => lineOf(x).join() === "A,B,C,D", "past the end clamps");
-    await host.ok("moveEntry", { entryId: id("A"), toIndex: 2 });
-    v = await host.waitFor((x) => lineOf(x).join() === "B,C,A,D", "A to third");
-    assert.equal((await host.emit("moveEntry", { entryId: id("A"), toIndex: 1.5 })).ok, false, "not an index");
+    await ok("move", { entryId: id("D"), toIndex: 0 });
+    await host.waitFor((x) => lineOf(x).join() === "D,A,B,C", "D first");
+    await ok("move", { entryId: id("D"), toIndex: 99 });
+    await host.waitFor((x) => lineOf(x).join() === "A,B,C,D", "past the end clamps");
+    await ok("move", { entryId: id("A"), toIndex: 2 });
+    await host.waitFor((x) => lineOf(x).join() === "B,C,A,D", "A to third");
+    assert.equal((await run("move", { entryId: id("A"), toIndex: 1.5 })).ok, false, "not an index");
 
-    await host.ok("moveToEnd", id("B"));
-    v = await host.waitFor((x) => lineOf(x).join() === "C,A,D,B", "B to the end");
+    await ok("to-end", { entryId: id("B") });
+    await host.waitFor((x) => lineOf(x).join() === "C,A,D,B", "B to the end");
 
-    // Now on: out of order. Then again: the first one is done.
-    await host.ok("nowOn", id("D"));
+    await ok("now-on", { entryId: id("D") });
     v = await host.waitFor((x) => x.now?.name === "D", "D on");
     assert.deepEqual(lineOf(v), ["C", "A", "B"]);
-    await host.ok("nowOn", id("A"));
+    await ok("now-on", { entryId: id("A") });
     v = await host.waitFor((x) => x.now?.name === "A", "A on");
     assert.equal(v.history.find((e) => e.name === "D").status, "done");
 
-    // The performer on stage back in line, at the end.
-    await host.ok("moveToEnd", id("A"));
-    v = await host.waitFor((x) => x.now === null && lineOf(x).join() === "C,B,A", "A back in line");
+    await ok("to-end", { entryId: id("A") });
+    await host.waitFor((x) => x.now === null && lineOf(x).join() === "C,B,A", "A back in line");
 
-    // Skip a waiting one, and the one on stage.
-    await host.ok("skipEntry", id("B"));
+    await ok("skip", { entryId: id("B") });
     v = await host.waitFor((x) => lineOf(x).join() === "C,A", "B skipped");
     assert.equal(v.history.find((e) => e.name === "B").status, "skipped");
-    await host.ok("nextPerformer");
-    await host.ok("skipEntry", id("C"));
-    v = await host.waitFor((x) => x.now === null && x.history.find((e) => e.name === "C")?.status === "skipped", "C skipped");
-    assert.equal((await host.emit("skipEntry", id("C"))).ok, false, "already out of line");
-    assert.equal((await host.emit("nowOn", id("C"))).ok, false, "not waiting");
+    await ok("next");
+    await ok("skip", { entryId: id("C") });
+    await host.waitFor((x) => x.now === null && x.history.find((e) => e.name === "C")?.status === "skipped", "C skipped");
+    assert.equal((await run("skip", { entryId: id("C") })).ok, false, "already out of line");
+    assert.equal((await run("now-on", { entryId: id("C") })).ok, false, "not waiting");
 
-    // Put back: at the end of the line.
-    await host.ok("restoreEntry", id("B"));
-    v = await host.waitFor((x) => lineOf(x).join() === "A,B", "B back");
-    assert.equal((await host.emit("restoreEntry", id("A"))).ok, false, "already waiting");
+    await ok("restore", { entryId: id("B") });
+    await host.waitFor((x) => lineOf(x).join() === "A,B", "B back");
+    assert.equal((await run("restore", { entryId: id("A") })).ok, false, "already waiting");
+    assert.equal((await run("fly")).status, 404, "unknown action");
+    assert.equal((await server.run(token, "nope", "next")).status, 404, "unknown stage");
   });
 
-  test("the host adds and edits by hand; patrons can't run the list", async () => {
-    const { host, patrons } = await setupRoom(server, 1);
-    const [p] = patrons;
-    // A name alone is fine for the host (the song can come later).
-    const { entryId } = await host.ok("addEntry", { name: "Grandma Jo" });
-    await host.ok("editEntry", { entryId, name: "Grandma Jo", song: "Jolene", artist: "Dolly Parton", with: "Sam" });
-    const v = await host.waitFor((x) => x.queue[0]?.song === "Jolene", "edited");
+  test("walk-ups by hand, editing, the message and pausing; patrons can't run the list", async () => {
+    await fresh();
+    const host = await server.runner("main", { token });
+    const p = await server.patron();
+    const { entryId } = await ok("add", { name: "Grandma Jo" });
+    await ok("edit", { entryId, name: "Grandma Jo", song: "Jolene", artist: "Dolly Parton", with: "Sam" });
+    let v = await host.waitFor((x) => x.queue[0]?.song === "Jolene", "edited");
     assert.equal(v.queue[0].byHost, true);
-    assert.equal(v.queue[0].with, "Sam");
-    assert.equal((await host.emit("addEntry", { name: "   " })).ok, false, "a name is required");
+    assert.equal((await run("add", { name: "   " })).ok, false, "a name is required");
 
-    for (const ev of ["nextPerformer", "finishCurrent"]) assert.equal((await p.emit(ev)).ok, false, ev);
-    for (const ev of ["skipEntry", "moveToEnd", "nowOn", "restoreEntry"]) assert.equal((await p.emit(ev, entryId)).ok, false, ev);
-    assert.equal((await p.emit("moveEntry", { entryId, toIndex: 0 })).ok, false);
-    assert.equal((await p.emit("addEntry", { name: "X" })).ok, false);
-    assert.equal((await p.emit("setSignupsOpen", false)).ok, false);
-    assert.equal((await p.emit("closeRoom")).ok, false);
-    assert.equal((await host.emit("signUp", song("Host"))).ok, false, "the host isn't a patron");
+    await ok("message", { message: "  10 minute   break " });
+    await ok("signups", { open: false });
+    const pv = await p.waitFor((x) => !x.live.signupsOpen && x.live.message, "paused with a message");
+    assert.equal(pv.live.message, "10 minute break");
+    assert.match(pv.gate.reason, /paused/i);
+
+    // A patron's socket has no run intents, and the run API needs staff or a guest.
+    for (const [action, body] of [["next"], ["signups", { open: true }], ["new-night"], ["add", { name: "X" }]]) {
+      const r = await server.run(undefined, "main", action, body);
+      assert.equal(r.status, 401, action);
+    }
+    assert.equal((await server.http("/api/run/me")).status, 401);
+    await ok("signups", { open: true });
+    v = await host.waitFor((x) => x.live.signupsOpen);
+  });
+
+  test("New night clears the list, the history, the counts and the message", async () => {
+    await fresh();
+    const host = await server.runner("main", { token });
+    const p = await server.patron();
+    await p.ok("signUp", song("Ann"));
+    await ok("next");
+    await ok("add", song("Walk-in"));
+    await ok("message", { message: "Last call" });
+    await ok("signups", { open: false });
+    const before = (await host.waitFor((x) => x.turns === 1 && x.queue.length === 1)).nightStartedAt;
+    await ok("new-night");
+    const v = await host.waitFor((x) => x.turns === 0 && x.queue.length === 0 && x.now === null, "cleared");
+    assert.equal(v.history.length, 0);
+    assert.equal(v.live.message, "");
+    assert.equal(v.live.signupsOpen, true);
+    assert.ok(v.nightStartedAt >= before);
+    const pv = await p.waitFor((x) => x.mine.length === 0 && x.gate.ok, "the phone can sign up again");
+    assert.equal(pv.turns, 0);
   });
 
   test("text is trimmed and capped; a karaoke signup needs a song", async () => {
-    const { host, patrons } = await setupRoom(server, 1);
-    const [p] = patrons;
+    await fresh();
+    const host = await server.runner("main", { token });
+    const p = await server.patron();
     const noSong = await p.emit("signUp", { name: "Ann" });
     assert.equal(noSong.ok, false);
     assert.match(noSong.error, /song/i);
