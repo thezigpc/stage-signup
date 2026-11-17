@@ -23,7 +23,7 @@ platform is `C:\CodeProjects\GameBroker` (public repo thezigpc/venueplay).
 - **Kiosk (0.2.2):** GameKit's `useSharedScreen()` (a box touchscreen,
   `__BARGAMES_SHARED_SCREEN__` from a venue app, or `?bg_shared=1`) decides it, not the keyboard. `StageSignup` uses an unsaved `newDeviceId()` per
   patron, and `PatronView` shows `KioskDone` (no Drop out) and then resets. `<OnScreenKeyboard />`
-  is mounted once in `main.tsx`. Fixed bottom UI uses the kit's `--bargames-keyboard`. Every text field needs `maxLength` and a `<form onSubmit>`
+  is mounted once in `main.tsx`. Fixed bottom UI uses the kit's `--bargames-keyboard`. Since kit 0.10.6, a `<select>` opens the kit's big-button list on keyboard screens (the stage limits on `/admin`). Every text field needs `maxLength` and a `<form onSubmit>`
   whose handler checks its own fields.
 - **Running the list is HTTP only:** `/api/run/<stage>/<action>`, behind the kit's
   `staffOrGuest`.

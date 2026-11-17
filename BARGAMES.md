@@ -1,10 +1,10 @@
-# Bar Games integration report: Stage Signup 0.2.2
+# Bar Games integration report: Stage Signup 0.2.3
 
 - **An app** (`"kind": "app"`), **level 2**.
-- **Versions:** SDK **0.16.0**, GameKit **0.10.2** (both vendored in `vendor/`).
+- **Versions:** SDK **0.16.0**, GameKit **0.10.6** (both vendored in `vendor/`).
 - **Manifest:**
   - id `signup`, port 3011, `routing.basePath: true`;
-  - image `ghcr.io/thezigpc/stage-signup:0.2.2`;
+  - image `ghcr.io/thezigpc/stage-signup:0.2.3`;
   - `guests: { path: "/kj", cohosts: true }`.
 
 0.1.0 was a game with rooms. 0.2.0 has none: no room codes, `sessionKinds` or commands, and no
@@ -21,7 +21,7 @@
 
 ## Checks
 
-`npx bargames validate .`: ✓ `signup@0.2.2 (sdk level 2)` (only the expected "not pinned by
+`npx bargames validate .`: ✓ `signup@0.2.3 (sdk level 2)` (only the expected "not pinned by
 digest" warning).
 
 `npx bargames check` on the mock box (`--base /signup --port 7321 --core-port 7322`):
@@ -59,6 +59,13 @@ all checks passed
     used to pin that `fixed` dialog to the row.
   - The venue's bottom announcement strip sits above the keyboard (kit 0.10.2), and the
     toast sits above both.
+- **Kit 0.10.3 to 0.10.6 (0.2.3):** there was no app code to change.
+  - The admin sign-in's autofocused password field now opens the keyboard on load, with no
+    automatic Shift.
+  - The stage-limit dropdowns (`/admin`) open the kit's big-button list on keyboard screens.
+  - There are no numeric text fields, and no global `button { white-space: nowrap }`.
+- **The kiosk on the box (box 0.24.0+):** "Stage Signup: start page" in the TV's Show menu puts
+  `/` on a touchscreen, which is the signup kiosk.
 
 ## Guest hosts (SDK 0.16.0)
 
@@ -97,6 +104,13 @@ and songs that people typed: the open-mic note never leaves the app.
 | `x-signup-paused` | signups paused or opened | `{ stage, paused }` |
 | `x-signup-new-night` | a stage's list was cleared | `{ stage }` |
 
+- **0.2.3, kit 0.10.6, on a keyboard and shared screen** (`?bg_keyboard=1&bg_shared=1`):
+  - `/admin` opens the keyboard on the autofocused password, without Shift.
+  - A stage limit's dropdown opens the kit's list, titled "Most signups per phone per night",
+    with every button on screen. Choosing 3 saves it (checked after a reload), and Cancel
+    closes the list.
+  - Drag to reorder still works on the touchscreen `/kj`, and doesn't open the keyboard.
+  - Everything from 0.2.1 and 0.2.2 below passes again.
 - **0.2.2, shared screens:**
   - With `?bg_keyboard=1` but not `?bg_shared=1`, the page is a personal device: "Drop out",
     and no reset.
