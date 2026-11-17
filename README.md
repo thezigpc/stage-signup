@@ -34,10 +34,11 @@ set once on first visit), then open `/kj`. On a Bar Games box, staff can also gi
 - The guest host gets `/kj` only. They can't open `/admin`.
 - They can add co-hosts, who get the same controls but can't add anyone.
 
-**A signup kiosk:** on a touchscreen plugged into a Bar Games box, the page shows an on-screen
-keyboard (GameKit's). That screen is shared, so each signup there is a new patron: the form
-starts empty, the confirmation has no "Drop out", and it resets for the next person.
-`?bg_keyboard=1` turns it on for testing, and `?bg_keyboard=0` turns it off.
+**A signup kiosk:** a touchscreen plugged into a Bar Games box, or a venue app in kiosk mode,
+is a shared screen, so each signup there is a new patron: the form starts empty, the
+confirmation has no "Drop out", and it resets for the next person. The box's touchscreens also
+get an on-screen keyboard (GameKit's). For testing, `?bg_shared=1` / `0` turns kiosk mode on
+or off, and `?bg_keyboard=1` / `0` does the same for the keyboard.
 
 Each patron is a device id kept in the phone's browser. Their place in line and the limits
 follow that id, across tabs and a rescanned QR code.

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { BackToGames, useOnScreenKeyboard } from "@bargames/gamekit/client";
+import { BackToGames, useSharedScreen } from "@bargames/gamekit/client";
 import type { PublicStage } from "@signup/shared";
 import { api } from "../api";
 import { deviceId, newDeviceId } from "../session";
@@ -88,10 +88,10 @@ export function PatronPage() {
 }
 
 function StageSignup({ stage, onGone }: { stage: string; onGone: () => void }) {
-  // A screen with the kit's on-screen keyboard (a touchscreen on the box) is a shared signup
+  // A shared screen (kit 0.10.2: a box touchscreen, or a venue app in kiosk mode) is a signup
   // kiosk, not someone's phone: each patron gets a fresh, unsaved device id, and "Next person"
   // starts over with another one.
-  const kiosk = useOnScreenKeyboard();
+  const kiosk = useSharedScreen();
   const [device, setDevice] = useState(() => (kiosk ? newDeviceId() : deviceId()));
   const { view, status, gone, skew } = useStage(stage, "patron", device);
   const { toast, setToast } = useToast();

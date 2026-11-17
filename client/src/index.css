@@ -377,7 +377,7 @@ button:focus-visible {
 .toast {
   position: fixed;
   left: 50%;
-  bottom: calc(1.2rem + max(var(--bargames-announcement-bottom, 0px), var(--keyboard-h, 0px)));
+  bottom: calc(1.2rem + var(--bargames-announcement-bottom, 0px) + var(--bargames-keyboard, 0px));
   transform: translateX(-50%);
   max-width: min(92vw, 520px);
   background: var(--text);
@@ -582,11 +582,11 @@ button:focus-visible {
   display: grid;
   place-items: center;
   padding: 16px;
-  padding-bottom: calc(16px + var(--keyboard-h, 0px));
+  padding-bottom: calc(16px + var(--bargames-keyboard, 0px));
 }
 .modal-box {
   width: min(100%, 520px);
-  max-height: calc(90vh - var(--keyboard-h, 0px));
+  max-height: calc(90vh - var(--bargames-keyboard, 0px));
   overflow: auto;
 }
 

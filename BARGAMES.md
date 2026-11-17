@@ -1,10 +1,10 @@
-# Bar Games integration report: Stage Signup 0.2.1
+# Bar Games integration report: Stage Signup 0.2.2
 
 - **An app** (`"kind": "app"`), **level 2**.
-- **Versions:** SDK **0.16.0**, GameKit **0.10.0** (both vendored in `vendor/`).
+- **Versions:** SDK **0.16.0**, GameKit **0.10.2** (both vendored in `vendor/`).
 - **Manifest:**
   - id `signup`, port 3011, `routing.basePath: true`;
-  - image `ghcr.io/thezigpc/stage-signup:0.2.1`;
+  - image `ghcr.io/thezigpc/stage-signup:0.2.2`;
   - `guests: { path: "/kj", cohosts: true }`.
 
 0.1.0 was a game with rooms. 0.2.0 has none: no room codes, `sessionKinds` or commands, and no
@@ -21,7 +21,7 @@
 
 ## Checks
 
-`npx bargames validate .`: ✓ `signup@0.2.1 (sdk level 2)` (only the expected "not pinned by
+`npx bargames validate .`: ✓ `signup@0.2.2 (sdk level 2)` (only the expected "not pinned by
 digest" warning).
 
 `npx bargames check` on the mock box (`--base /signup --port 7321 --core-port 7322`):
@@ -36,7 +36,7 @@ digest" warning).
 all checks passed
 ```
 
-## On-screen keyboard (0.2.1, GameKit 0.10.0)
+## On-screen keyboard (0.2.1, GameKit 0.10.0) and shared screens (0.2.2, GameKit 0.10.2)
 
 - The kit's `<OnScreenKeyboard />` is mounted once, at the root, so it covers every page: the
   signup page, the TV, `/kj` and `/admin`. Phones, tablets and PCs never get it.
@@ -44,20 +44,21 @@ all checks passed
   `<form onSubmit>`, so the keyboard's Enter submits. The submit handlers check the fields
   themselves, because Enter submits even when the button is disabled. There are no number
   fields: the stage limits are dropdowns.
-- **The signup kiosk.** A screen that gets the keyboard is treated as a shared kiosk rather
-  than someone's phone:
+- **The signup kiosk** (0.2.2: the kit's `useSharedScreen()`, which covers a box touchscreen
+  or a venue app in kiosk mode with `__BARGAMES_SHARED_SCREEN__`, whether or not our keyboard
+  shows) is a shared screen rather than someone's phone:
   - each patron gets a fresh, unsaved device id, so the per-phone limits don't block the next
     person;
   - the form doesn't fill in the last name typed;
   - after signing up, the patron sees their place without a "Drop out" button (the next
     person would get it). It shows "Next person" and goes back to an empty form after 20 s.
 - **Nothing hides under the keyboard.**
-  - The page mirrors the kit's body padding into `--keyboard-h`.
+  - The page uses the kit's `--bargames-keyboard` (0.2.2; 0.2.1 had its own copy).
   - The toast (refusals such as "Signups are paused") sits above it.
   - So does the host's edit dialog, which now opens in a portal: a queue row's drag transform
     used to pin that `fixed` dialog to the row.
-  - The venue's announcement strip, when it's at the bottom, is under the keyboard while
-    someone types. That's the kit's own bar.
+  - The venue's bottom announcement strip sits above the keyboard (kit 0.10.2), and the
+    toast sits above both.
 
 ## Guest hosts (SDK 0.16.0)
 
@@ -96,7 +97,13 @@ and songs that people typed: the open-mic note never leaves the app.
 | `x-signup-paused` | signups paused or opened | `{ stage, paused }` |
 | `x-signup-new-night` | a stage's list was cleared | `{ stage }` |
 
-- **On-screen keyboard (0.2.1), on the mock box with `?bg_keyboard=1`, at 1080p and 4K, by
+- **0.2.2, shared screens:**
+  - With `?bg_keyboard=1` but not `?bg_shared=1`, the page is a personal device: "Drop out",
+    and no reset.
+  - `__BARGAMES_SHARED_SCREEN__` with the system keyboard (`?bg_keyboard=0`) is a kiosk.
+  - Enter is held when the default button is disabled.
+  - `--bargames-keyboard` is set while the keyboard is open.
+- **On-screen keyboard (0.2.1, and again in 0.2.2 with `&bg_shared=1`), on the mock box with `?bg_keyboard=1`, at 1080p and 4K, by
   tapping the keys:**
   - On the kiosk, Ann types her name, song and artist, and Enter signs her up.
   - "Next person" gives an empty form, and Bo signs up as #2.

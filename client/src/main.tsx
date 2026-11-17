@@ -2,7 +2,6 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { basePath, ErrorBoundary, OnScreenKeyboard, VenueAnnouncement } from "@bargames/gamekit/client";
-import { trackKeyboardHeight } from "./keyboard";
 import { AdminPage } from "./pages/AdminPage";
 import { KjPage } from "./pages/KjPage";
 import { PatronPage } from "./pages/PatronPage";
@@ -18,8 +17,6 @@ import "./index.css";
 function Venue() {
   return <VenueAnnouncement ctx={useVenue()} />;
 }
-
-trackKeyboardHeight();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
