@@ -377,7 +377,7 @@ button:focus-visible {
 .toast {
   position: fixed;
   left: 50%;
-  bottom: calc(1.2rem + var(--bargames-announcement-bottom, 0px));
+  bottom: calc(1.2rem + max(var(--bargames-announcement-bottom, 0px), var(--keyboard-h, 0px)));
   transform: translateX(-50%);
   max-width: min(92vw, 520px);
   background: var(--text);
@@ -435,6 +435,17 @@ button:focus-visible {
 }
 .mine-panel.up h2 {
   font-size: 1.6rem;
+}
+/* A kiosk's confirmation (a box touchscreen): big, centred, then back to the form. */
+.kiosk-done {
+  text-align: center;
+  background: color-mix(in srgb, var(--primary) 18%, var(--surface));
+}
+.kiosk-done h2 {
+  font-size: 1.6rem;
+}
+.kiosk-done .place {
+  justify-content: center;
 }
 .place {
   display: flex;
@@ -571,10 +582,11 @@ button:focus-visible {
   display: grid;
   place-items: center;
   padding: 16px;
+  padding-bottom: calc(16px + var(--keyboard-h, 0px));
 }
 .modal-box {
   width: min(100%, 520px);
-  max-height: 90vh;
+  max-height: calc(90vh - var(--keyboard-h, 0px));
   overflow: auto;
 }
 

@@ -47,6 +47,7 @@ export function StagesAdmin({
     e.preventDefault();
     setNote("");
     const name = newName.trim();
+    if (!name) return;
     if (await call("/stages", { method: "POST", body: { name } })) {
       setNote(`Added ${name}.`);
       setNewName("");
@@ -101,7 +102,7 @@ export function StagesAdmin({
         <form className="panel admin-form" onSubmit={add}>
           <label>
             Add a stage
-            <input value={newName} onChange={(e) => setNewName(e.target.value.slice(0, LIMITS.stageName))} placeholder="Back room" />
+            <input value={newName} onChange={(e) => setNewName(e.target.value.slice(0, LIMITS.stageName))} maxLength={LIMITS.stageName} placeholder="Back room" />
           </label>
           <button className="btn btn-secondary" disabled={!newName.trim()}>
             Add
@@ -160,6 +161,7 @@ function StageEditor({
           <input
             value={name}
             onChange={(e) => setName(e.target.value.slice(0, LIMITS.stageName))}
+            maxLength={LIMITS.stageName}
             aria-label="Stage name"
             className="grow stage-name-input"
           />

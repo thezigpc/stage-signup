@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent as RPointerEvent } from "react";
 import { joinDisplay, joinUrl as venueJoinUrl } from "@bargames/sdk/client";
 import { LIMITS, type CohostLink, type EntryInput, type EntryView, type RunnerInfo, type StageView } from "@signup/shared";
@@ -238,24 +239,27 @@ function QueueActions({ e, view, run }: { e: EntryView; view: StageView; run: Ru
       <button className="btn btn-small btn-ghost" onClick={() => setEditing(true)}>
         Edit
       </button>
-      {editing && (
-        <div className="modal" role="dialog" aria-label={`Edit ${e.name}`} onClick={() => setEditing(false)}>
-          <div className="panel modal-box" onClick={(ev) => ev.stopPropagation()}>
-            <EntryForm
-              title={`Edit ${e.name}`}
-              karaoke={view.stage.mode === "karaoke"}
-              initial={e}
-              submitLabel="Save"
-              onSubmit={async (input) => {
-                const ok = await run("edit", { entryId: e.id, ...input });
-                if (ok) setEditing(false);
-                return Boolean(ok);
-              }}
-              onCancel={() => setEditing(false)}
-            />
-          </div>
-        </div>
-      )}
+      {/* In a portal: a row's drag transform would otherwise pin this "fixed" dialog to the row. */}
+      {editing &&
+        createPortal(
+          <div className="modal" role="dialog" aria-label={`Edit ${e.name}`} onClick={() => setEditing(false)}>
+            <div className="panel modal-box" onClick={(ev) => ev.stopPropagation()}>
+              <EntryForm
+                title={`Edit ${e.name}`}
+                karaoke={view.stage.mode === "karaoke"}
+                initial={e}
+                submitLabel="Save"
+                onSubmit={async (input) => {
+                  const ok = await run("edit", { entryId: e.id, ...input });
+                  if (ok) setEditing(false);
+                  return Boolean(ok);
+                }}
+                onCancel={() => setEditing(false)}
+              />
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -301,27 +305,27 @@ function EntryForm({
       <h3>{title}</h3>
       <label>
         Name
-        <input value={f.name} onChange={set("name", LIMITS.name)} required />
+        <input value={f.name} onChange={set("name", LIMITS.name)} maxLength={LIMITS.name} required />
       </label>
       {karaoke && (
         <>
           <label>
             Song
-            <input value={f.song} onChange={set("song", LIMITS.song)} />
+            <input value={f.song} onChange={set("song", LIMITS.song)} maxLength={LIMITS.song} />
           </label>
           <label>
             Artist
-            <input value={f.artist} onChange={set("artist", LIMITS.artist)} />
+            <input value={f.artist} onChange={set("artist", LIMITS.artist)} maxLength={LIMITS.artist} />
           </label>
         </>
       )}
       <label>
         Note (only hosts see it)
-        <input value={f.note} onChange={set("note", LIMITS.note)} />
+        <input value={f.note} onChange={set("note", LIMITS.note)} maxLength={LIMITS.note} />
       </label>
       <label>
         With (a duet, group or band)
-        <input value={f.with} onChange={set("with", LIMITS.with)} />
+        <input value={f.with} onChange={set("with", LIMITS.with)} maxLength={LIMITS.with} />
       </label>
       <div className="row">
         <button className="btn btn-primary" disabled={!f.name.trim()}>
@@ -556,6 +560,7 @@ function CohostsPanel({ onError }: { onError: (msg: string) => void }) {
           <input
             value={name}
             onChange={(e) => setName(e.target.value.slice(0, LIMITS.cohostName))}
+            maxLength={LIMITS.cohostName}
             placeholder="Co-host's name"
             aria-label="Co-host's name"
             className="grow"

@@ -96,6 +96,7 @@ function PasswordForm({ status, onToken }: { status: AdminStatus; onToken: (t: s
   const [error, setError] = useState("");
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (busy || password.length === 0) return;
     if (setup && password !== confirm) {
       setError("The passwords don't match.");
       return;
@@ -132,6 +133,7 @@ function PasswordForm({ status, onToken }: { status: AdminStatus; onToken: (t: s
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          maxLength={200}
           autoComplete={setup ? "new-password" : "current-password"}
           autoFocus
         />
@@ -139,7 +141,7 @@ function PasswordForm({ status, onToken }: { status: AdminStatus; onToken: (t: s
       {setup && (
         <label>
           Confirm password
-          <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" />
+          <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} maxLength={200} autoComplete="new-password" />
         </label>
       )}
       {error && <p className="error">{error}</p>}

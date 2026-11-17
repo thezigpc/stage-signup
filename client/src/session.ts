@@ -11,16 +11,24 @@ const prefs = createSessionStore("signup");
 export function deviceId(): string {
   let id = prefs.pref("device");
   if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) {
-    const bytes = new Uint8Array(16);
-    try {
-      crypto.getRandomValues(bytes);
-    } catch {
-      for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
-    }
-    id = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    id = newDeviceId();
     prefs.setPref("device", id);
   }
   return id;
+}
+
+/**
+ * A fresh device id that isn't saved. A shared signup screen (a kiosk) uses one per patron,
+ * so the next person never sees, or drops, the last one's place in line.
+ */
+export function newDeviceId(): string {
+  const bytes = new Uint8Array(16);
+  try {
+    crypto.getRandomValues(bytes);
+  } catch {
+    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** The last name typed on this device ("signup_last"), to prefill the form. */

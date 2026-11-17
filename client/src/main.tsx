@@ -1,7 +1,8 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { basePath, ErrorBoundary, VenueAnnouncement } from "@bargames/gamekit/client";
+import { basePath, ErrorBoundary, OnScreenKeyboard, VenueAnnouncement } from "@bargames/gamekit/client";
+import { trackKeyboardHeight } from "./keyboard";
 import { AdminPage } from "./pages/AdminPage";
 import { KjPage } from "./pages/KjPage";
 import { PatronPage } from "./pages/PatronPage";
@@ -18,6 +19,8 @@ function Venue() {
   return <VenueAnnouncement ctx={useVenue()} />;
 }
 
+trackKeyboardHeight();
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ErrorBoundary>
@@ -32,6 +35,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
+      {/* Kit 0.10.0: big keys on a box touchscreen (the signup kiosk); hidden on phones and PCs. */}
+      <OnScreenKeyboard />
     </ErrorBoundary>
   </React.StrictMode>,
 );

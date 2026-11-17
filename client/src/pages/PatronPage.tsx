@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { BackToGames } from "@bargames/gamekit/client";
+import { BackToGames, useOnScreenKeyboard } from "@bargames/gamekit/client";
 import type { PublicStage } from "@signup/shared";
 import { api } from "../api";
-import { deviceId } from "../session";
+import { deviceId, newDeviceId } from "../session";
 import { useGameName } from "../useGameName";
 import { useStage } from "../useStage";
 import { useToast } from "../useToast";
@@ -88,7 +88,11 @@ export function PatronPage() {
 }
 
 function StageSignup({ stage, onGone }: { stage: string; onGone: () => void }) {
-  const device = useMemo(() => deviceId(), []);
+  // A screen with the kit's on-screen keyboard (a touchscreen on the box) is a shared signup
+  // kiosk, not someone's phone: each patron gets a fresh, unsaved device id, and "Next person"
+  // starts over with another one.
+  const kiosk = useOnScreenKeyboard();
+  const [device, setDevice] = useState(() => (kiosk ? newDeviceId() : deviceId()));
   const { view, status, gone, skew } = useStage(stage, "patron", device);
   const { toast, setToast } = useToast();
   if (gone) {
@@ -112,7 +116,12 @@ function StageSignup({ stage, onGone }: { stage: string; onGone: () => void }) {
           Connection lost. Reconnecting…
         </div>
       )}
-      <PatronView view={view} skew={skew} onError={setToast} />
+      <PatronView
+        view={view}
+        skew={skew}
+        onError={setToast}
+        kiosk={kiosk ? { next: () => setDevice(newDeviceId()) } : undefined}
+      />
       {toast && (
         <div className="toast" role="alert" onClick={() => setToast(null)}>
           {toast}

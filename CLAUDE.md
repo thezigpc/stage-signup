@@ -20,6 +20,11 @@ platform is `C:\CodeProjects\GameBroker` (public repo thezigpc/venueplay).
   (`/tv?stage=<id>`). "New night" clears a stage's list.
 - **Patrons are a device id** (localStorage `signup_device`), sent with the socket's `watch`.
   No seats or tokens. Per-phone limits key on it.
+- **Kiosk (0.2.1):** a screen with GameKit's on-screen keyboard (`useOnScreenKeyboard()`, a box
+  touchscreen or `?bg_keyboard=1`) is shared. `StageSignup` uses an unsaved `newDeviceId()` per
+  patron, and `PatronView` shows `KioskDone` (no Drop out) and then resets. `<OnScreenKeyboard />`
+  is mounted once in `main.tsx`. Every text field needs `maxLength` and a `<form onSubmit>`
+  whose handler checks its own fields.
 - **Running the list is HTTP only:** `/api/run/<stage>/<action>`, behind the kit's
   `staffOrGuest`.
   - Staff: the app's admin session (bearer token from `/admin`, same tab), or `bg.isStaff`.

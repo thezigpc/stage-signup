@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { LIMITS, type EntryInput, type StageView } from "@signup/shared";
 import { EntryDetail, STATUS_LABEL, useNow, waitText } from "../components/bits";
 import { lastSignup, rememberSignup } from "../session";
@@ -17,9 +17,16 @@ async function send<T = object>(onError: OnError, event: "signUp" | "dropOut", a
 }
 
 const UP_NEXT_SHOWN = 5;
+/** A kiosk goes back to an empty form this long after a signup. */
+const KIOSK_RESET_S = 20;
+
+/** On a shared signup screen: start over for the next patron. */
+export interface Kiosk {
+  next: () => void;
+}
 
 /** A patron's phone: their place in line, the signup form, and who's on. */
-export function PatronView({ view, skew, onError }: { view: StageView; skew: number; onError: OnError }) {
+export function PatronView({ view, skew, onError, kiosk }: { view: StageView; skew: number; onError: OnError; kiosk?: Kiosk }) {
   const now = useNow(skew);
   const karaoke = view.stage.mode === "karaoke";
   const active = view.mine.find((e) => e.status === "waiting" || e.status === "up");
@@ -53,14 +60,23 @@ export function PatronView({ view, skew, onError }: { view: StageView; skew: num
         )}
       </section>
 
-      {active?.status === "up" && (
+      {kiosk && active && (
+        <KioskDone
+          name={active.name}
+          position={position}
+          wait={position ? waitText(view, position, now) : ""}
+          onNext={kiosk.next}
+        />
+      )}
+
+      {!kiosk && active?.status === "up" && (
         <section className="panel mine-panel up" role="status">
           <h2>🎉 You're on now!</h2>
           <p>Head to the stage.</p>
         </section>
       )}
 
-      {active?.status === "waiting" && (
+      {!kiosk && active?.status === "waiting" && (
         <section className="panel mine-panel">
           <h2 className="eyebrow">You're on the list</h2>
           <div className="place">
@@ -82,7 +98,7 @@ export function PatronView({ view, skew, onError }: { view: StageView; skew: num
 
       {!active &&
         (view.gate.ok ? (
-          <SignupForm karaoke={karaoke} onError={onError} />
+          <SignupForm karaoke={karaoke} onError={onError} shared={Boolean(kiosk)} />
         ) : (
           <section className="panel">
             <h2>Sign up</h2>
@@ -110,7 +126,7 @@ export function PatronView({ view, skew, onError }: { view: StageView; skew: num
         )}
       </section>
 
-      {past.length > 0 && (
+      {!kiosk && past.length > 0 && (
         <section className="panel">
           <h2>Your signups tonight</h2>
           <ul className="history">
@@ -129,8 +145,42 @@ export function PatronView({ view, skew, onError }: { view: StageView; skew: num
   );
 }
 
-function SignupForm({ karaoke, onError }: { karaoke: boolean; onError: OnError }) {
-  const last = lastSignup();
+/** A kiosk's "you're in": no Drop out (the next person would get it), then a clean form. */
+function KioskDone({ name, position, wait, onNext }: { name: string; position: number; wait: string; onNext: () => void }) {
+  const [left, setLeft] = useState(KIOSK_RESET_S);
+  useEffect(() => {
+    const t = setInterval(() => setLeft((n) => n - 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const done = useRef(false);
+  const next = () => {
+    if (done.current) return;
+    done.current = true;
+    onNext();
+  };
+  useEffect(() => {
+    if (left <= 0) next();
+  });
+  return (
+    <section className="panel mine-panel kiosk-done" role="status">
+      <h2>{position ? `You're on the list, ${name}!` : `You're up, ${name}! Head to the stage.`}</h2>
+      {position > 0 && (
+        <div className="place">
+          <span className="place-num">#{position}</span>
+          <span className="place-wait">{wait}</span>
+        </div>
+      )}
+      <p className="muted">Watch the TV for your turn. To drop out, ask the host.</p>
+      <button className="btn btn-primary btn-big" onClick={next}>
+        Next person ({Math.max(0, left)})
+      </button>
+    </section>
+  );
+}
+
+function SignupForm({ karaoke, onError, shared }: { karaoke: boolean; onError: OnError; shared: boolean }) {
+  // A shared screen never prefills the last patron's name.
+  const last = shared ? {} : lastSignup();
   const [name, setName] = useState(last.name ?? "");
   const [song, setSong] = useState("");
   const [artist, setArtist] = useState("");
@@ -141,6 +191,7 @@ function SignupForm({ karaoke, onError }: { karaoke: boolean; onError: OnError }
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (busy || !name.trim() || (karaoke && !song.trim())) return;
     const entry: EntryInput = karaoke
       ? { name: name.trim(), song: song.trim(), artist: artist.trim() }
       : { name: name.trim(), note: note.trim() };
@@ -148,7 +199,7 @@ function SignupForm({ karaoke, onError }: { karaoke: boolean; onError: OnError }
     setBusy(true);
     const ok = await send(onError, "signUp", entry);
     setBusy(false);
-    if (ok) rememberSignup({ name: entry.name });
+    if (ok && !shared) rememberSignup({ name: entry.name });
   };
 
   return (
@@ -159,6 +210,7 @@ function SignupForm({ karaoke, onError }: { karaoke: boolean; onError: OnError }
         <input
           value={name}
           onChange={(e) => setName(e.target.value.slice(0, LIMITS.name))}
+          maxLength={LIMITS.name}
           placeholder="Name"
           autoComplete="nickname"
           required
@@ -171,6 +223,7 @@ function SignupForm({ karaoke, onError }: { karaoke: boolean; onError: OnError }
             <input
               value={song}
               onChange={(e) => setSong(e.target.value.slice(0, LIMITS.song))}
+              maxLength={LIMITS.song}
               placeholder="Song title"
               required
             />
@@ -180,6 +233,7 @@ function SignupForm({ karaoke, onError }: { karaoke: boolean; onError: OnError }
             <input
               value={artist}
               onChange={(e) => setArtist(e.target.value.slice(0, LIMITS.artist))}
+              maxLength={LIMITS.artist}
               placeholder="Who sings it"
             />
           </label>
@@ -190,6 +244,7 @@ function SignupForm({ karaoke, onError }: { karaoke: boolean; onError: OnError }
           <textarea
             value={note}
             onChange={(e) => setNote(e.target.value.slice(0, LIMITS.note))}
+            maxLength={LIMITS.note}
             placeholder="What you'll do, what you need (a stool, a second mic…)"
             rows={3}
           />
@@ -205,6 +260,7 @@ function SignupForm({ karaoke, onError }: { karaoke: boolean; onError: OnError }
           <input
             value={friend}
             onChange={(e) => setFriend(e.target.value.slice(0, LIMITS.with))}
+            maxLength={LIMITS.with}
             placeholder="Their names"
           />
         </label>
